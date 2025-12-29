@@ -39,9 +39,9 @@ This repository contains a Sprint Capacity Planner - a web-based tool for planni
 ```
 .
 ├── .github/
-│   └── copilot-instructions.md    # This file
-├── README.md                        # Project documentation
-└── [web application files]          # HTML, CSS, JS files for the Sprint Capacity Planner
+│   └── copilot-instructions.md   # This file
+├── README.md                      # Project documentation
+└── [web application files]        # HTML, CSS, JS files for the Sprint Capacity Planner
 ```
 
 ## Development Guidelines
