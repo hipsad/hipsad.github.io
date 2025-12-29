@@ -825,7 +825,12 @@
                     
                     // If this is the first task, select it
                     if (updatedTasks.length === 1) {
-                        sessionRef.child('currentTaskIndex').set(0);
+                        sessionRef.child('currentTaskIndex').set(0).catch((error) => {
+                            console.error('Error setting initial task index:', error);
+                            if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                                alert('❌ Cannot select initial task - permission denied.\n\nPlease check Firebase database rules.');
+                            }
+                        });
                     }
                 }).catch((error) => {
                     console.error('Error adding task:', error);
@@ -849,6 +854,9 @@
                 });
                 sessionRef.child('votes').set({}).catch((error) => {
                     console.error('Error resetting votes:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot reset votes - permission denied.\n\nPlease check Firebase database rules.');
+                    }
                 });
             },
 
