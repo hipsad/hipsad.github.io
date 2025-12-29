@@ -25,15 +25,19 @@ The Sprint Planning Estimator now supports **real-time shared sessions** across 
 1. In your Firebase project dashboard, click "Realtime Database" in the left sidebar
 2. Click "Create Database"
 3. Select a location closest to your users
-4. Start in **test mode** for now (we'll set proper rules next)
+4. **Start in "locked mode"** (we'll set the correct rules in the next step)
 5. Click "Enable"
 
+> **⚠️ IMPORTANT**: Do not skip step 3 below! The default locked mode rules will prevent the app from working. You MUST configure the rules as shown in the next step.
+
 ### 3. Configure Database Rules
+
+**IMPORTANT**: This application requires specific database rules to work properly. The application does NOT use Firebase Authentication, so rules must allow unauthenticated read/write access.
 
 1. In the Realtime Database section, click on the "Rules" tab
 2. Replace the rules with the following:
 
-**For Development/Testing (Simple but less secure):**
+**Required Rules (allows unauthenticated access):**
 ```json
 {
   "rules": {
@@ -41,29 +45,6 @@ The Sprint Planning Estimator now supports **real-time shared sessions** across 
       "$sessionId": {
         ".read": true,
         ".write": true,
-        ".validate": "newData.hasChildren(['host', 'participants', 'tasks'])",
-        ".indexOn": ["createdAt"]
-      }
-    }
-  }
-}
-```
-
-**For Production (More Secure - Recommended):**
-```json
-{
-  "rules": {
-    "sessions": {
-      "$sessionId": {
-        ".read": true,
-        ".write": "!data.exists() || data.child('host').val() === auth.uid || !data.hasChild('host')",
-        ".validate": "newData.hasChildren(['host', 'participants', 'tasks'])",
-        "participants": {
-          ".write": true
-        },
-        "votes": {
-          ".write": true
-        },
         ".indexOn": ["createdAt"]
       }
     }
@@ -73,10 +54,14 @@ The Sprint Planning Estimator now supports **real-time shared sessions** across 
 
 3. Click "Publish"
 
-**Note**: The development rules allow anyone to read/write sessions. For production, you should:
-- Implement Firebase Authentication
-- Use more restrictive rules that verify user identity
-- Consider adding session expiration logic
+**⚠️ Security Note**: These rules allow anyone to read and write to your database. This is necessary for the current implementation which doesn't use authentication. To improve security:
+
+- Only share session links with trusted team members
+- Consider implementing Firebase Authentication in the future
+- Monitor your Firebase usage to detect any abuse
+- Set up data retention policies to auto-delete old sessions
+
+**Why these rules are needed**: The application creates and updates sessions without requiring users to sign in. If you use rules that require authentication (`auth.uid`), you will see "PERMISSION_DENIED" errors because users are not authenticated.
 
 ### 4. Get Your Firebase Configuration
 
@@ -168,6 +153,41 @@ The current setup uses open read/write rules for simplicity. For production:
    - Monitor usage in Firebase Console
 
 ## Troubleshooting
+
+### "PERMISSION_DENIED" Error
+
+This is the most common error and means your Firebase database rules are not configured correctly.
+
+**Symptoms:**
+- Error in console: `FIREBASE WARNING: set at /sessions/XXXXXX failed: permission_denied`
+- Alert shows "Error creating session: PERMISSION_DENIED"
+
+**Solution:**
+1. Go to [Firebase Console](https://console.firebase.google.com/)
+2. Select your project
+3. Click "Realtime Database" in the left sidebar
+4. Click the "Rules" tab
+5. Replace the rules with:
+   ```json
+   {
+     "rules": {
+       "sessions": {
+         "$sessionId": {
+           ".read": true,
+           ".write": true,
+           ".indexOn": ["createdAt"]
+         }
+       }
+     }
+   }
+   ```
+6. Click "Publish"
+7. Try creating a session again
+
+**Why this happens:**
+- The default Firebase rules deny all read/write access
+- Rules with `auth != null` require authentication, which this app doesn't use
+- You need to explicitly allow unauthenticated read/write access
 
 ### "Firebase is not available" Error
 - Check that you've replaced the demo Firebase config with your real config

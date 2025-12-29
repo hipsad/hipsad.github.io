@@ -653,7 +653,24 @@
                     this.updateURL();
                 }).catch((error) => {
                     console.error('Error creating session:', error);
-                    alert('Failed to create session. Please try again.');
+                    
+                    // Provide specific guidance for permission errors
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ PERMISSION DENIED\n\n' +
+                              'Your Firebase database rules are not configured correctly.\n\n' +
+                              'To fix this:\n' +
+                              '1. Go to Firebase Console → Realtime Database → Rules\n' +
+                              '2. Set rules to allow read/write access (see FIREBASE_SETUP.md)\n' +
+                              '3. Click "Publish"\n\n' +
+                              'The app requires unauthenticated read/write access to work.');
+                    } else {
+                        alert('Failed to create session. Please try again.\n\nError: ' + error.message);
+                    }
+                    
+                    // Reset state on failure
+                    this.state.sessionId = null;
+                    this.state.isHost = false;
+                    sessionRef = null;
                 });
             },
 
@@ -714,7 +731,23 @@
                     this.updateURL();
                 }).catch((error) => {
                     console.error('Error joining session:', error);
-                    alert('Failed to join session. Please try again.');
+                    
+                    // Provide specific guidance for permission errors
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ PERMISSION DENIED\n\n' +
+                              'Your Firebase database rules are not configured correctly.\n\n' +
+                              'To fix this:\n' +
+                              '1. Go to Firebase Console → Realtime Database → Rules\n' +
+                              '2. Set rules to allow read/write access (see FIREBASE_SETUP.md)\n' +
+                              '3. Click "Publish"\n\n' +
+                              'The app requires unauthenticated read/write access to work.');
+                    } else {
+                        alert('Failed to join session. Please try again.\n\nError: ' + error.message);
+                    }
+                    
+                    // Reset state on failure
+                    this.state.sessionId = null;
+                    sessionRef = null;
                 });
             },
 
@@ -792,7 +825,17 @@
                     
                     // If this is the first task, select it
                     if (updatedTasks.length === 1) {
-                        sessionRef.child('currentTaskIndex').set(0);
+                        sessionRef.child('currentTaskIndex').set(0).catch((error) => {
+                            console.error('Error setting initial task index:', error);
+                            if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                                alert('❌ Cannot select initial task - permission denied.\n\nPlease check Firebase database rules.');
+                            }
+                        });
+                    }
+                }).catch((error) => {
+                    console.error('Error adding task:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot add task - permission denied.\n\nPlease check Firebase database rules.');
                     }
                 });
             },
@@ -803,8 +846,18 @@
                     return;
                 }
 
-                sessionRef.child('currentTaskIndex').set(index);
-                sessionRef.child('votes').set({});
+                sessionRef.child('currentTaskIndex').set(index).catch((error) => {
+                    console.error('Error selecting task:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot select task - permission denied.\n\nPlease check Firebase database rules.');
+                    }
+                });
+                sessionRef.child('votes').set({}).catch((error) => {
+                    console.error('Error resetting votes:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot reset votes - permission denied.\n\nPlease check Firebase database rules.');
+                    }
+                });
             },
 
             vote(value) {
@@ -816,7 +869,12 @@
                 const updatedVotes = { ...this.state.votes };
                 updatedVotes[this.state.currentUser] = value;
                 
-                sessionRef.child('votes').set(updatedVotes);
+                sessionRef.child('votes').set(updatedVotes).catch((error) => {
+                    console.error('Error submitting vote:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot submit vote - permission denied.\n\nPlease check Firebase database rules.');
+                    }
+                });
             },
 
             resetVotes() {
@@ -825,7 +883,12 @@
                     return;
                 }
 
-                sessionRef.child('votes').set({});
+                sessionRef.child('votes').set({}).catch((error) => {
+                    console.error('Error resetting votes:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot reset votes - permission denied.\n\nPlease check Firebase database rules.');
+                    }
+                });
             },
 
             nextTask() {
@@ -860,6 +923,11 @@
                     tasks: this.state.tasks,
                     currentTaskIndex: nextIndex,
                     votes: {}
+                }).catch((error) => {
+                    console.error('Error moving to next task:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot move to next task - permission denied.\n\nPlease check Firebase database rules.');
+                    }
                 });
             },
 
