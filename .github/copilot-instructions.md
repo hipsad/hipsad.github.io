@@ -36,6 +36,8 @@ This repository contains a Sprint Capacity Planner - a web-based tool for planni
 
 ## File Structure
 
+The repository will contain the following structure as the Sprint Capacity Planner develops:
+
 ```
 .
 ├── .github/
@@ -43,6 +45,8 @@ This repository contains a Sprint Capacity Planner - a web-based tool for planni
 ├── README.md                      # Project documentation
 └── [web application files]        # HTML, CSS, JS files for the Sprint Capacity Planner
 ```
+
+*Note: Currently, the repository is minimal and will be expanded with the Sprint Capacity Planner application files.*
 
 ## Development Guidelines
 
