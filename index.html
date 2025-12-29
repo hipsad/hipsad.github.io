@@ -138,6 +138,20 @@
             background: #e53e3e;
         }
 
+        .btn-warning {
+            background: #ed8936;
+            color: white;
+        }
+
+        .btn-warning:hover {
+            background: #dd6b20;
+        }
+
+        .btn-small {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+
         .task-list {
             list-style: none;
             margin-top: 15px;
@@ -154,6 +168,23 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 8px;
+        }
+
+        .task-content {
+            flex: 1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-delete-btn {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .task-item:hover .task-delete-btn {
+            opacity: 1;
         }
 
         .task-item:hover {
@@ -195,6 +226,14 @@
             margin-bottom: 6px;
             background: #f7fafc;
             border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .participant-info {
+            flex: 1;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -367,6 +406,13 @@
             border-left: 4px solid #f6ad55;
         }
 
+        .session-controls {
+            margin-top: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
         .host-badge {
             display: inline-block;
             background: #f6ad55;
@@ -457,6 +503,10 @@
                         <div class="session-id" id="displaySessionId"></div>
                         <button class="btn btn-copy" onclick="app.copySessionId()">📋 Copy ID</button>
                         <button class="btn btn-copy" onclick="app.copySessionLink()">🔗 Copy Link</button>
+                    </div>
+                    <div class="session-controls">
+                        <button class="btn btn-warning" id="leaveSessionBtn" onclick="app.leaveSession()">Leave Session</button>
+                        <button class="btn btn-danger hidden" id="endSessionBtn" onclick="app.endSession()">End Session (Host)</button>
                     </div>
                 </div>
 
@@ -760,6 +810,8 @@
                 sessionRef.on('value', (snapshot) => {
                     if (!snapshot.exists()) {
                         console.warn('Session no longer exists');
+                        alert('The session has been ended by the host.');
+                        this.clearLocalSession();
                         return;
                     }
 
@@ -795,6 +847,142 @@
                 }).catch((err) => {
                     console.error('Failed to copy session link:', err);
                     alert('Failed to copy to clipboard. Please copy manually: ' + url);
+                });
+            },
+
+            leaveSession() {
+                if (!confirm('Are you sure you want to leave this session?')) {
+                    return;
+                }
+
+                if (!database || !sessionRef) {
+                    this.clearLocalSession();
+                    return;
+                }
+
+                // Remove participant from Firebase
+                const participantsRef = sessionRef.child('participants');
+                participantsRef.transaction((currentParticipants) => {
+                    if (!currentParticipants) return currentParticipants;
+                    return currentParticipants.filter(p => p.name !== this.state.currentUser);
+                }).then(() => {
+                    // Remove the user's vote if they have one
+                    if (this.state.votes[this.state.currentUser] !== undefined) {
+                        const votesRef = sessionRef.child('votes/' + this.state.currentUser);
+                        votesRef.remove();
+                    }
+                    
+                    // Disconnect from Firebase
+                    if (sessionRef) {
+                        sessionRef.off();
+                        sessionRef = null;
+                    }
+                    
+                    this.clearLocalSession();
+                }).catch((error) => {
+                    console.error('Error leaving session:', error);
+                    // Still clear local state even if Firebase update fails
+                    this.clearLocalSession();
+                });
+            },
+
+            endSession() {
+                if (!this.state.isHost) {
+                    alert('Only the host can end the session');
+                    return;
+                }
+
+                if (!confirm('Are you sure you want to end this session? This will remove all data and disconnect all participants.')) {
+                    return;
+                }
+
+                if (!database || !sessionRef) {
+                    this.clearLocalSession();
+                    return;
+                }
+
+                // Delete the entire session from Firebase
+                sessionRef.remove().then(() => {
+                    console.log('Session ended and removed from Firebase');
+                    
+                    // Disconnect from Firebase
+                    if (sessionRef) {
+                        sessionRef.off();
+                        sessionRef = null;
+                    }
+                    
+                    this.clearLocalSession();
+                }).catch((error) => {
+                    console.error('Error ending session:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot end session - permission denied.\n\nPlease check Firebase database rules.');
+                    } else {
+                        alert('Failed to end session: ' + error.message);
+                    }
+                });
+            },
+
+            clearLocalSession() {
+                // Clear local state
+                this.state.sessionId = null;
+                this.state.currentUser = null;
+                this.state.isHost = false;
+                this.state.participants = [];
+                this.state.tasks = [];
+                this.state.currentTaskIndex = -1;
+                this.state.votes = {};
+                
+                // Clear localStorage
+                localStorage.removeItem('sprintPlannerLocal');
+                
+                // Clear URL
+                const url = new URL(window.location);
+                url.searchParams.delete('session');
+                window.history.pushState({}, '', url);
+                
+                // Re-render
+                this.render();
+            },
+
+            deleteTask(taskId, event) {
+                // Stop event propagation to prevent task selection
+                if (event) {
+                    event.stopPropagation();
+                }
+
+                if (!this.state.isHost) {
+                    alert('Only the host can delete tasks');
+                    return;
+                }
+
+                if (!confirm('Are you sure you want to delete this task?')) {
+                    return;
+                }
+
+                const taskIndex = this.state.tasks.findIndex(t => t.id === taskId);
+                if (taskIndex === -1) return;
+
+                const updatedTasks = this.state.tasks.filter(t => t.id !== taskId);
+                
+                // Adjust current task index if necessary
+                let newTaskIndex = this.state.currentTaskIndex;
+                if (taskIndex === this.state.currentTaskIndex) {
+                    // If deleting the current task, reset to -1
+                    newTaskIndex = -1;
+                } else if (taskIndex < this.state.currentTaskIndex) {
+                    // If deleting a task before the current one, decrement the index
+                    newTaskIndex = this.state.currentTaskIndex - 1;
+                }
+
+                sessionRef.update({
+                    tasks: updatedTasks,
+                    currentTaskIndex: newTaskIndex,
+                    votes: newTaskIndex === -1 ? {} : this.state.votes
+                }).catch((error) => {
+                    console.error('Error deleting task:', error);
+                    if (error.code === 'PERMISSION_DENIED' || error.message.includes('Permission denied')) {
+                        alert('❌ Cannot delete task - permission denied.\n\nPlease check Firebase database rules.');
+                    }
                 });
             },
 
@@ -976,20 +1164,35 @@
                         li.classList.add('estimated');
                     }
 
+                    // Create task content wrapper
+                    const taskContent = document.createElement('div');
+                    taskContent.className = 'task-content';
+                    
                     if (this.state.isHost) {
-                        li.onclick = () => this.selectTask(index);
+                        taskContent.onclick = () => this.selectTask(index);
                     }
 
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'task-name';
                     nameSpan.textContent = task.name;
-                    li.appendChild(nameSpan);
+                    taskContent.appendChild(nameSpan);
 
                     if (task.estimate !== null) {
                         const estimateSpan = document.createElement('span');
                         estimateSpan.className = 'task-estimate';
                         estimateSpan.textContent = `${task.estimate} pts`;
-                        li.appendChild(estimateSpan);
+                        taskContent.appendChild(estimateSpan);
+                    }
+
+                    li.appendChild(taskContent);
+
+                    // Add delete button for host
+                    if (this.state.isHost) {
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'btn btn-danger btn-small task-delete-btn';
+                        deleteBtn.textContent = '✕';
+                        deleteBtn.onclick = (e) => this.deleteTask(task.id, e);
+                        li.appendChild(deleteBtn);
                     }
 
                     container.appendChild(li);
@@ -1067,6 +1270,12 @@
                 // Show host badge and controls
                 document.getElementById('hostBadge').classList.toggle('hidden', !this.state.isHost);
                 document.getElementById('hostTaskControls').classList.toggle('hidden', !this.state.isHost);
+                
+                // Show end session button only for host
+                const endSessionBtn = document.getElementById('endSessionBtn');
+                if (endSessionBtn) {
+                    endSessionBtn.classList.toggle('hidden', !this.state.isHost);
+                }
 
                 // Display session ID
                 if (hasSession) {
