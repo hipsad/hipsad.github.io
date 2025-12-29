@@ -464,7 +464,12 @@
             loadState() {
                 const saved = localStorage.getItem('sprintPlannerState');
                 if (saved) {
-                    this.state = { ...this.state, ...JSON.parse(saved) };
+                    try {
+                        this.state = { ...this.state, ...JSON.parse(saved) };
+                    } catch (e) {
+                        console.error('Failed to load state from localStorage:', e);
+                        localStorage.removeItem('sprintPlannerState');
+                    }
                 }
             },
 
