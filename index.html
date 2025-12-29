@@ -591,7 +591,10 @@
             },
 
             generateSessionId() {
-                return Math.random().toString(36).substring(2, 8).toUpperCase();
+                // Use crypto.getRandomValues for better security
+                const array = new Uint8Array(6);
+                crypto.getRandomValues(array);
+                return Array.from(array, byte => byte.toString(36).toUpperCase()).join('').substring(0, 6);
             },
 
             loadLocalState() {
@@ -668,6 +671,12 @@
                     return;
                 }
 
+                // Validate session ID format (alphanumeric, 6 characters)
+                if (!/^[A-Z0-9]{6}$/.test(sessionId)) {
+                    alert('Invalid session ID format. Session ID should be 6 alphanumeric characters.');
+                    return;
+                }
+
                 if (!database) {
                     alert('Firebase is not available. Please check your internet connection or contact the administrator.');
                     return;
@@ -687,12 +696,18 @@
                         return;
                     }
 
-                    // Add participant to session
-                    const participants = snapshot.val().participants || [];
-                    if (!participants.find(p => p.name === userName)) {
-                        participants.push({ name: userName });
-                        sessionRef.child('participants').set(participants);
-                    }
+                    // Add participant to session using transaction to avoid race conditions
+                    const participantsRef = sessionRef.child('participants');
+                    participantsRef.transaction((currentParticipants) => {
+                        if (!currentParticipants) {
+                            currentParticipants = [];
+                        }
+                        // Only add if not already in the list
+                        if (!currentParticipants.find(p => p.name === userName)) {
+                            currentParticipants.push({ name: userName });
+                        }
+                        return currentParticipants;
+                    });
 
                     this.saveLocalState();
                     this.connectToSession(sessionId);
@@ -734,6 +749,9 @@
             copySessionId() {
                 navigator.clipboard.writeText(this.state.sessionId).then(() => {
                     alert('Session ID copied to clipboard!');
+                }).catch((err) => {
+                    console.error('Failed to copy session ID:', err);
+                    alert('Failed to copy to clipboard. Please copy manually: ' + this.state.sessionId);
                 });
             },
 
@@ -741,6 +759,9 @@
                 const url = `${window.location.origin}${window.location.pathname}?session=${this.state.sessionId}`;
                 navigator.clipboard.writeText(url).then(() => {
                     alert('Session link copied to clipboard! Share this with your team.');
+                }).catch((err) => {
+                    console.error('Failed to copy session link:', err);
+                    alert('Failed to copy to clipboard. Please copy manually: ' + url);
                 });
             },
 

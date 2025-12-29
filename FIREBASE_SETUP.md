@@ -33,6 +33,7 @@ The Sprint Planning Estimator now supports **real-time shared sessions** across 
 1. In the Realtime Database section, click on the "Rules" tab
 2. Replace the rules with the following:
 
+**For Development/Testing (Simple but less secure):**
 ```json
 {
   "rules": {
@@ -40,6 +41,29 @@ The Sprint Planning Estimator now supports **real-time shared sessions** across 
       "$sessionId": {
         ".read": true,
         ".write": true,
+        ".validate": "newData.hasChildren(['host', 'participants', 'tasks'])",
+        ".indexOn": ["createdAt"]
+      }
+    }
+  }
+}
+```
+
+**For Production (More Secure - Recommended):**
+```json
+{
+  "rules": {
+    "sessions": {
+      "$sessionId": {
+        ".read": true,
+        ".write": "!data.exists() || data.child('host').val() === auth.uid || !data.hasChild('host')",
+        ".validate": "newData.hasChildren(['host', 'participants', 'tasks'])",
+        "participants": {
+          ".write": true
+        },
+        "votes": {
+          ".write": true
+        },
         ".indexOn": ["createdAt"]
       }
     }
@@ -49,7 +73,10 @@ The Sprint Planning Estimator now supports **real-time shared sessions** across 
 
 3. Click "Publish"
 
-**Note**: These rules allow anyone to read/write sessions. For production use, consider implementing authentication or more restrictive rules.
+**Note**: The development rules allow anyone to read/write sessions. For production, you should:
+- Implement Firebase Authentication
+- Use more restrictive rules that verify user identity
+- Consider adding session expiration logic
 
 ### 4. Get Your Firebase Configuration
 
@@ -154,8 +181,9 @@ The current setup uses open read/write rules for simplicity. For production:
 
 ### Database URL Issues
 - Make sure you're using the correct database URL format
-- For newer projects: `https://PROJECT-ID-default-rtdb.REGION.firebasedatabase.app`
-- For older projects: `https://PROJECT-ID.firebaseio.com`
+- **For newer projects**: `https://PROJECT-ID-default-rtdb.REGION.firebasedatabase.app` (e.g., `https://my-app-default-rtdb.europe-west1.firebasedatabase.app`)
+- **For older projects**: `https://PROJECT-ID.firebaseio.com` (e.g., `https://my-app.firebaseio.com`)
+- Check your Firebase Console for the exact URL under Realtime Database settings
 
 ## Cost and Limits
 
