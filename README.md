@@ -47,33 +47,53 @@ A collaborative web application for sprint planning and story point estimation u
 
 ## Setup Requirements
 
-**Note**: This application uses Firebase for real-time collaboration. To use it:
+⚠️ **IMPORTANT**: This application requires Firebase to work. If you see "PERMISSION_DENIED" errors, your Firebase rules are not configured correctly.
+
+**Quick Setup:**
 
 1. Create a Firebase project at [https://console.firebase.google.com/](https://console.firebase.google.com/)
 2. Enable Firebase Realtime Database
-3. Update the Firebase configuration in `index.html` with your project credentials:
+3. **Configure Database Rules** (this is required!):
+   - Go to Realtime Database → Rules tab
+   - Replace with:
+   ```json
+   {
+     "rules": {
+       "sessions": {
+         "$sessionId": {
+           ".read": true,
+           ".write": true,
+           ".indexOn": ["createdAt"]
+         }
+       }
+     }
+   }
+   ```
+   - Click "Publish"
+4. Update the Firebase configuration in `index.html` with your project credentials:
    ```javascript
    const firebaseConfig = {
        apiKey: "YOUR_API_KEY",
        authDomain: "YOUR_PROJECT.firebaseapp.com",
-       databaseURL: "https://YOUR_PROJECT.firebaseio.com",
+       databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
        projectId: "YOUR_PROJECT",
        storageBucket: "YOUR_PROJECT.appspot.com",
        messagingSenderId: "YOUR_SENDER_ID",
        appId: "YOUR_APP_ID"
    };
    ```
-4. Set Firebase Realtime Database rules to allow read/write:
-   ```json
-   {
-     "rules": {
-       "sessions": {
-         ".read": true,
-         ".write": true
-       }
-     }
-   }
-   ```
+
+📖 **For detailed setup instructions, see [FIREBASE_SETUP.md](FIREBASE_SETUP.md)**
+
+### Common Issue: "PERMISSION_DENIED" Error
+
+If you see this error when creating or joining a session:
+- Your Firebase database rules are not set correctly
+- Go to Firebase Console → Realtime Database → Rules
+- Use the rules shown above (allow `.read: true` and `.write: true`)
+- Click "Publish" to apply the rules
+
+Without these rules, the app cannot create or join sessions.
 
 ## Static Deployment
 
