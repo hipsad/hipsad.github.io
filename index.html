@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sprint Planning Estimator</title>
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    
     <style>
         * {
             margin: 0;
@@ -317,6 +322,75 @@
             display: none;
         }
 
+        .session-info {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 2px solid #667eea;
+        }
+
+        .session-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #667eea;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .session-id {
+            font-family: monospace;
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+
+        .btn-copy {
+            background: #667eea;
+            color: white;
+            padding: 8px 12px;
+            font-size: 12px;
+            margin-right: 5px;
+        }
+
+        .btn-copy:hover {
+            background: #5568d3;
+        }
+
+        .host-controls {
+            background: #fff5e6;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border-left: 4px solid #f6ad55;
+        }
+
+        .host-badge {
+            display: inline-block;
+            background: #f6ad55;
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .input-group-inline {
+            display: flex;
+            gap: 8px;
+        }
+
+        .input-group-inline input {
+            flex: 1;
+        }
+
+        .input-group-inline button {
+            flex-shrink: 0;
+        }
+
         .current-task-display {
             background: #f7fafc;
             padding: 20px;
@@ -367,16 +441,37 @@
                         <label for="userName">Your Name</label>
                         <input type="text" id="userName" placeholder="Enter your name">
                     </div>
-                    <button class="btn btn-primary" onclick="app.joinSession()">Join Session</button>
+                    <button class="btn btn-primary" onclick="app.createSession()" style="margin-bottom: 10px;">Create New Session (Host)</button>
+                    <div style="text-align: center; margin: 15px 0; color: #999; font-size: 14px;">— OR —</div>
+                    <div class="input-group">
+                        <label for="sessionIdInput">Session ID</label>
+                        <input type="text" id="sessionIdInput" placeholder="Enter session ID">
+                    </div>
+                    <button class="btn btn-primary" onclick="app.joinSession()">Join Existing Session</button>
+                </div>
+
+                <!-- Session Info -->
+                <div id="sessionInfoSection" class="hidden">
+                    <div class="session-info">
+                        <div class="session-label">Session ID</div>
+                        <div class="session-id" id="displaySessionId"></div>
+                        <button class="btn btn-copy" onclick="app.copySessionId()">📋 Copy ID</button>
+                        <button class="btn btn-copy" onclick="app.copySessionLink()">🔗 Copy Link</button>
+                    </div>
                 </div>
 
                 <!-- Tasks Section -->
                 <div id="tasksSection" class="hidden">
-                    <div class="section-title">Tasks</div>
-                    <div class="input-group">
-                        <input type="text" id="newTaskInput" placeholder="Add a task..." onkeypress="if(event.key==='Enter') app.addTask()">
+                    <div class="section-title">
+                        Tasks
+                        <span id="hostBadge" class="host-badge hidden">HOST</span>
                     </div>
-                    <button class="btn btn-primary" onclick="app.addTask()">Add Task</button>
+                    <div id="hostTaskControls" class="hidden">
+                        <div class="input-group">
+                            <input type="text" id="newTaskInput" placeholder="Add a task..." onkeypress="if(event.key==='Enter') app.addTask()">
+                        </div>
+                        <button class="btn btn-primary" onclick="app.addTask()">Add Task</button>
+                    </div>
                     <ul class="task-list" id="taskList"></ul>
                 </div>
 
@@ -441,9 +536,34 @@
     </div>
 
     <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDemoKey-Replace-With-Real-Key",
+            authDomain: "sprint-planner-demo.firebaseapp.com",
+            databaseURL: "https://sprint-planner-demo-default-rtdb.firebaseio.com",
+            projectId: "sprint-planner-demo",
+            storageBucket: "sprint-planner-demo.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:abcdef123456"
+        };
+
+        // Initialize Firebase
+        let database = null;
+        let sessionRef = null;
+        
+        try {
+            firebase.initializeApp(firebaseConfig);
+            database = firebase.database();
+            console.log('Firebase initialized successfully');
+        } catch (error) {
+            console.warn('Firebase initialization failed, falling back to localStorage:', error);
+        }
+
         const app = {
             state: {
+                sessionId: null,
                 currentUser: null,
+                isHost: false,
                 participants: [],
                 tasks: [],
                 currentTaskIndex: -1,
@@ -452,46 +572,184 @@
             },
 
             init() {
-                this.loadState();
+                // Check URL for session ID
+                const urlParams = new URLSearchParams(window.location.search);
+                const sessionIdFromUrl = urlParams.get('session');
+                
+                if (sessionIdFromUrl) {
+                    document.getElementById('sessionIdInput').value = sessionIdFromUrl;
+                }
+
+                this.loadLocalState();
                 this.render();
                 this.renderVotingCards();
+
+                // If we have a session, reconnect to it
+                if (this.state.sessionId && this.state.currentUser) {
+                    this.connectToSession(this.state.sessionId);
+                }
             },
 
-            saveState() {
-                localStorage.setItem('sprintPlannerState', JSON.stringify(this.state));
+            generateSessionId() {
+                return Math.random().toString(36).substring(2, 8).toUpperCase();
             },
 
-            loadState() {
-                const saved = localStorage.getItem('sprintPlannerState');
+            loadLocalState() {
+                const saved = localStorage.getItem('sprintPlannerLocal');
                 if (saved) {
                     try {
-                        this.state = { ...this.state, ...JSON.parse(saved) };
+                        const localData = JSON.parse(saved);
+                        this.state.sessionId = localData.sessionId;
+                        this.state.currentUser = localData.currentUser;
+                        this.state.isHost = localData.isHost;
                     } catch (e) {
-                        console.error('Failed to load state from localStorage:', e);
-                        localStorage.removeItem('sprintPlannerState');
+                        console.error('Failed to load local state:', e);
                     }
                 }
             },
 
-            joinSession() {
+            saveLocalState() {
+                localStorage.setItem('sprintPlannerLocal', JSON.stringify({
+                    sessionId: this.state.sessionId,
+                    currentUser: this.state.currentUser,
+                    isHost: this.state.isHost
+                }));
+            },
+
+            createSession() {
                 const userName = document.getElementById('userName').value.trim();
                 if (!userName) {
                     alert('Please enter your name');
                     return;
                 }
 
-                this.state.currentUser = userName;
-                
-                // Add user to participants if not already there
-                if (!this.state.participants.find(p => p.name === userName)) {
-                    this.state.participants.push({ name: userName });
+                if (!database) {
+                    alert('Firebase is not available. Please check your internet connection or contact the administrator.');
+                    return;
                 }
 
-                this.saveState();
-                this.render();
+                this.state.currentUser = userName;
+                this.state.isHost = true;
+                this.state.sessionId = this.generateSessionId();
+
+                // Initialize session in Firebase
+                const initialData = {
+                    host: userName,
+                    participants: [{ name: userName }],
+                    tasks: [],
+                    currentTaskIndex: -1,
+                    votes: {},
+                    createdAt: Date.now()
+                };
+
+                sessionRef = database.ref('sessions/' + this.state.sessionId);
+                sessionRef.set(initialData).then(() => {
+                    console.log('Session created:', this.state.sessionId);
+                    this.saveLocalState();
+                    this.connectToSession(this.state.sessionId);
+                    this.updateURL();
+                }).catch((error) => {
+                    console.error('Error creating session:', error);
+                    alert('Failed to create session. Please try again.');
+                });
+            },
+
+            joinSession() {
+                const userName = document.getElementById('userName').value.trim();
+                const sessionId = document.getElementById('sessionIdInput').value.trim().toUpperCase();
+
+                if (!userName) {
+                    alert('Please enter your name');
+                    return;
+                }
+
+                if (!sessionId) {
+                    alert('Please enter a session ID');
+                    return;
+                }
+
+                if (!database) {
+                    alert('Firebase is not available. Please check your internet connection or contact the administrator.');
+                    return;
+                }
+
+                this.state.currentUser = userName;
+                this.state.sessionId = sessionId;
+                this.state.isHost = false;
+
+                // Check if session exists
+                sessionRef = database.ref('sessions/' + sessionId);
+                sessionRef.once('value').then((snapshot) => {
+                    if (!snapshot.exists()) {
+                        alert('Session not found. Please check the session ID.');
+                        this.state.sessionId = null;
+                        sessionRef = null;
+                        return;
+                    }
+
+                    // Add participant to session
+                    const participants = snapshot.val().participants || [];
+                    if (!participants.find(p => p.name === userName)) {
+                        participants.push({ name: userName });
+                        sessionRef.child('participants').set(participants);
+                    }
+
+                    this.saveLocalState();
+                    this.connectToSession(sessionId);
+                    this.updateURL();
+                }).catch((error) => {
+                    console.error('Error joining session:', error);
+                    alert('Failed to join session. Please try again.');
+                });
+            },
+
+            connectToSession(sessionId) {
+                if (!database) return;
+
+                sessionRef = database.ref('sessions/' + sessionId);
+                
+                // Listen for changes
+                sessionRef.on('value', (snapshot) => {
+                    if (!snapshot.exists()) {
+                        console.warn('Session no longer exists');
+                        return;
+                    }
+
+                    const data = snapshot.val();
+                    this.state.participants = data.participants || [];
+                    this.state.tasks = data.tasks || [];
+                    this.state.currentTaskIndex = data.currentTaskIndex ?? -1;
+                    this.state.votes = data.votes || {};
+
+                    this.render();
+                });
+            },
+
+            updateURL() {
+                const url = new URL(window.location);
+                url.searchParams.set('session', this.state.sessionId);
+                window.history.pushState({}, '', url);
+            },
+
+            copySessionId() {
+                navigator.clipboard.writeText(this.state.sessionId).then(() => {
+                    alert('Session ID copied to clipboard!');
+                });
+            },
+
+            copySessionLink() {
+                const url = `${window.location.origin}${window.location.pathname}?session=${this.state.sessionId}`;
+                navigator.clipboard.writeText(url).then(() => {
+                    alert('Session link copied to clipboard! Share this with your team.');
+                });
             },
 
             addTask() {
+                if (!this.state.isHost) {
+                    alert('Only the host can add tasks');
+                    return;
+                }
+
                 const input = document.getElementById('newTaskInput');
                 const taskName = input.value.trim();
                 
@@ -500,62 +758,61 @@
                     return;
                 }
 
-                this.state.tasks.push({
+                const newTask = {
                     id: Date.now(),
                     name: taskName,
                     estimate: null
-                });
+                };
 
-                input.value = '';
+                const updatedTasks = [...this.state.tasks, newTask];
                 
-                // If this is the first task, select it
-                if (this.state.tasks.length === 1) {
-                    this.state.currentTaskIndex = 0;
-                }
-
-                this.saveState();
-                this.render();
+                sessionRef.child('tasks').set(updatedTasks).then(() => {
+                    input.value = '';
+                    
+                    // If this is the first task, select it
+                    if (updatedTasks.length === 1) {
+                        sessionRef.child('currentTaskIndex').set(0);
+                    }
+                });
             },
 
             selectTask(index) {
-                this.state.currentTaskIndex = index;
-                this.state.votes = {};
-                this.saveState();
-                this.render();
+                if (!this.state.isHost) {
+                    alert('Only the host can select tasks');
+                    return;
+                }
+
+                sessionRef.child('currentTaskIndex').set(index);
+                sessionRef.child('votes').set({});
             },
 
             vote(value) {
                 if (this.state.currentTaskIndex === -1) {
-                    alert('Please select a task first');
+                    alert('Please wait for the host to select a task');
                     return;
                 }
 
-                this.state.votes[this.state.currentUser] = value;
-                this.saveState();
-                this.render();
-            },
-
-            revealVotes() {
-                // Check if all participants have voted
-                const allVoted = this.state.participants.every(p => 
-                    this.state.votes[p.name] !== undefined
-                );
-
-                if (!allVoted) {
-                    alert('Waiting for all participants to vote');
-                    return;
-                }
-
-                this.render();
+                const updatedVotes = { ...this.state.votes };
+                updatedVotes[this.state.currentUser] = value;
+                
+                sessionRef.child('votes').set(updatedVotes);
             },
 
             resetVotes() {
-                this.state.votes = {};
-                this.saveState();
-                this.render();
+                if (!this.state.isHost) {
+                    alert('Only the host can reset votes');
+                    return;
+                }
+
+                sessionRef.child('votes').set({});
             },
 
             nextTask() {
+                if (!this.state.isHost) {
+                    alert('Only the host can move to the next task');
+                    return;
+                }
+
                 // Save the average estimate for the current task
                 const currentTask = this.state.tasks[this.state.currentTaskIndex];
                 if (currentTask) {
@@ -570,15 +827,19 @@
                 }
 
                 // Move to next task
+                let nextIndex;
                 if (this.state.currentTaskIndex < this.state.tasks.length - 1) {
-                    this.state.currentTaskIndex++;
+                    nextIndex = this.state.currentTaskIndex + 1;
                 } else {
-                    this.state.currentTaskIndex = 0;
+                    nextIndex = 0;
                 }
 
-                this.state.votes = {};
-                this.saveState();
-                this.render();
+                // Update Firebase
+                sessionRef.update({
+                    tasks: this.state.tasks,
+                    currentTaskIndex: nextIndex,
+                    votes: {}
+                });
             },
 
             calculateAverage() {
@@ -626,7 +887,9 @@
                         li.classList.add('estimated');
                     }
 
-                    li.onclick = () => this.selectTask(index);
+                    if (this.state.isHost) {
+                        li.onclick = () => this.selectTask(index);
+                    }
 
                     const nameSpan = document.createElement('span');
                     nameSpan.className = 'task-name';
@@ -699,6 +962,7 @@
             render() {
                 // Show/hide sections based on state
                 const hasUser = this.state.currentUser !== null;
+                const hasSession = this.state.sessionId !== null;
                 const hasTasks = this.state.tasks.length > 0;
                 const hasCurrentTask = this.state.currentTaskIndex >= 0;
                 const allVoted = this.state.participants.every(p => 
@@ -706,17 +970,27 @@
                 );
 
                 // Setup section
-                document.getElementById('setupSection').classList.toggle('hidden', hasUser);
-                document.getElementById('tasksSection').classList.toggle('hidden', !hasUser);
-                document.getElementById('participantsSection').classList.toggle('hidden', !hasUser);
+                document.getElementById('setupSection').classList.toggle('hidden', hasUser && hasSession);
+                document.getElementById('sessionInfoSection').classList.toggle('hidden', !hasSession);
+                document.getElementById('tasksSection').classList.toggle('hidden', !hasSession);
+                document.getElementById('participantsSection').classList.toggle('hidden', !hasSession);
+
+                // Show host badge and controls
+                document.getElementById('hostBadge').classList.toggle('hidden', !this.state.isHost);
+                document.getElementById('hostTaskControls').classList.toggle('hidden', !this.state.isHost);
+
+                // Display session ID
+                if (hasSession) {
+                    document.getElementById('displaySessionId').textContent = this.state.sessionId;
+                }
 
                 // Main screens
-                document.getElementById('welcomeScreen').classList.toggle('hidden', hasUser);
-                document.getElementById('noTaskScreen').classList.toggle('hidden', hasUser && (hasTasks || hasCurrentTask));
-                document.getElementById('votingScreen').classList.toggle('hidden', !hasUser || !hasCurrentTask);
+                document.getElementById('welcomeScreen').classList.toggle('hidden', hasSession);
+                document.getElementById('noTaskScreen').classList.toggle('hidden', hasSession && (hasTasks || hasCurrentTask));
+                document.getElementById('votingScreen').classList.toggle('hidden', !hasSession || !hasCurrentTask);
 
                 // Voting vs Results
-                if (hasUser && hasCurrentTask) {
+                if (hasSession && hasCurrentTask) {
                     document.getElementById('votingInterface').classList.toggle('hidden', allVoted);
                     document.getElementById('resultsInterface').classList.toggle('hidden', !allVoted);
 
@@ -725,7 +999,7 @@
                 }
 
                 // Render lists
-                if (hasUser) {
+                if (hasSession) {
                     this.renderTasks();
                     this.renderParticipants();
                     this.renderVotingCards();
