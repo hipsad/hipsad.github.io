@@ -10,7 +10,7 @@ const MODES = [
 /** Room settings form (used when creating a room and by the host in the lobby). */
 export function settingsForm(initial = {}, { submitLabel, onSubmit }) {
   const teamCount = h('select', { id: 'f-teams' },
-    Array.from({ length: LIMITS.MAX_TEAMS - LIMITS.MIN_TEAMS + 1 }, (_, i) => h('option', { value: LIMITS.MIN_TEAMS + i }, `${LIMITS.MIN_TEAMS + i} teams`)));
+    Array.from({ length: LIMITS.MAX_TEAMS - LIMITS.MIN_TEAMS + 1 }, (_, i) => h('option', { value: LIMITS.MIN_TEAMS + i }, `${LIMITS.MIN_TEAMS + i} team${LIMITS.MIN_TEAMS + i === 1 ? "" : "s"}`)));
   const target = h('input', { id: 'f-target', type: 'number', min: LIMITS.MIN_TARGET_SCORE, max: LIMITS.MAX_TARGET_SCORE, inputmode: 'numeric' });
   const mode = h('select', { id: 'f-mode' }, MODES.map(([v, l]) => h('option', { value: v }, l)));
   const names = h('div', { class: 'team-names' });
