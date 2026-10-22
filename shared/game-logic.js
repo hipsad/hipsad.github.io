@@ -190,7 +190,7 @@
    * The database rules re-check every transition, so a hostile client cannot do more than a planner can.
    * env = { now: <number or server-timestamp sentinel>, rng: () => [0,1) }.
    */
-  const R = (p) => `rooms/{code}/${p}`;
+  const R = (p) => `wavelengthRooms/{code}/${p}`;
   const emptyScores = () => ({ t0: 0, t1: 0, t2: 0, t3: 0 });
 
   function emptyGame() {
@@ -384,7 +384,7 @@
     requireMember(room, target);
     const others = Object.entries(room.players).filter(([u]) => u !== target).sort((a, b) => a[1].joinedAt - b[1].joinedAt);
     if (others.length === 0) {
-      return { updates: { 'rooms/{code}': null, 'presence/{code}': null, 'live/{code}': null } };
+      return { updates: { 'wavelengthRooms/{code}': null, 'presence/{code}': null, 'live/{code}': null } };
     }
     const updates = { [R(`players/${target}`)]: null, ...stamp(env) };
     const t = teamOf(room, target);

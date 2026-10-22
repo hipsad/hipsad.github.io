@@ -16,7 +16,7 @@ Static frontend in `wavelength/` (plain ES modules, no build step, works on GitH
 ## Security model (Spark plan, "friends-trust")
 
 * Every action is one multi-path `update()`; the rules check the transition (state machine, who may act, team capacity, role parity, score arithmetic, winner) so scores cannot be forged and a guess/reveal/next-turn cannot be applied twice.
-* **Target visibility:** the target is stored in `rooms/{code}/secret`. The read rule denies it to the active Guesser until the state is `reveal`/`finished`, and denies it to non-members. It is never in the public `game` node before the reveal. Spectators and the Psychic can read it.
+* **Target visibility:** the target is stored in `wavelengthRooms/{code}/secret`. The read rule denies it to the active Guesser until the state is `reveal`/`finished`, and denies it to non-members. It is never in the public `game` node before the reveal. Spectators and the Psychic can read it.
 * **Two-phase guess:** the Guesser cannot read the target, so they write only `lock = {turn, guess}` (once per turn). Any other player's browser (Psychic or spectator) then publishes the reveal; the rules recompute the difference, points, new score and winner from `lock` and `secret`. A "Reveal result" button is shown as a fallback if nobody does it automatically.
 * Only room members can read anything in a room; rooms can't be read as a whole, only child nodes. Identity = Firebase Anonymous Auth.
 
@@ -36,9 +36,11 @@ The rules were tested with an in-repo evaluator (`npm test`), not the Firebase e
    This **replaces the rules currently in the console** (the existing `sessions` rules are preserved).
 3. The frontend deploys as before through GitHub Pages.
 
+The Wavelength client and Sprint Planner intentionally share the existing `sprint-planner-5e1b0` Firebase project and Realtime Database URL. Wavelength rooms live under `/wavelengthRooms/{code}`; room creation writes only to that individual code path, and the database rules atomically allow creation only when that code does not already exist. The client does not read `/wavelengthRooms` or grant broad parent-level access. Because non-members cannot read room contents (including the hidden target), a denied write is logged and surfaced rather than guessed to be a collision and silently retried. Deploy the updated rules file so the console uses the same namespace; no public-access rules are needed.
+
 ## Game rules implemented
 
-* Rooms: 5-char codes from an unambiguous alphabet (≈33M combinations; creation is refused if the code exists and retried). Invite link `…/wavelength/?room=CODE`.
+* Rooms: 5-char codes from an unambiguous alphabet (≈33M combinations; an atomic create at the individual code path refuses to overwrite an existing room). Invite link `…/wavelength/?room=CODE`.
 * 2–4 teams of exactly 2, configurable target score (default 10), prompt mode built-in / custom / mixed, optional team names.
 * Host can assign/unassign/remove players; start is blocked until every team has exactly 2 players.
 * States: `lobby → clue → guessing → reveal → (clue | finished)`; other transitions are rejected. Roles alternate per team every time it plays. Scoring: within 5 → 2, within 15 → 1 (edit `shared/constants.js`, and keep the numbers in `database.rules.json`; a test checks they match). First team ≥ target wins (tie-break: highest score, then the active team, then lowest index).
@@ -55,7 +57,7 @@ The rules were tested with an in-repo evaluator (`npm test`), not the Firebase e
 2. Devices B, C, D: open the link, enter names, join. All appear in the lobby with green dots.
 3. Everyone picks a team; a third player trying a full team is refused. Start stays disabled until both teams are 2/2.
 4. Refresh device B in the lobby: same slot, no duplicate.
-5. Host starts. The Psychic and the other team see the target; the Guesser's dial shows no target (and reading `rooms/<code>/secret` from the Guesser's session is denied).
+5. Host starts. The Psychic and the other team see the target; the Guesser's dial shows no target (and reading `wavelengthRooms/<code>/secret` from the Guesser's session is denied).
 6. Psychic taps "I've given my clue"; the Guesser drags the needle (touch and mouse) and other devices see it move; the Psychic cannot move it.
 7. Guesser locks in: within a second another device publishes the reveal; target animates in on all devices, points and scoreboard update; double-tapping only scores once.
 8. The other team plays next; each team's roles swap on its second turn.
