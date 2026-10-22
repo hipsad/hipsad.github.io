@@ -2,7 +2,7 @@ import { h, replace, clear, append } from './dom.js';
 import * as api from './api.js';
 import { createDial } from './dial.js';
 import { settingsForm } from './forms.js';
-import { LIMITS, STATES, TEAM_COLORS, scoringBands, lobbyReadiness, normalizeRoomCode, isValidRoomCode, arr } from './shared.js';
+import { LIMITS, STATES, TEAM_COLORS, scoringBands, lobbyReadiness, normalizeRoomCode, isValidRoomCode, arr, decorateGame, teamMembers, teamOf } from './shared.js';
 
 const root = document.getElementById('app');
 const put = (...c) => append(root, c);
@@ -10,13 +10,14 @@ const toastEl = document.getElementById('toast');
 const LS_NAME = 'wl.name', LS_ROOM = 'wl.room';
 
 const S = {
-  uid: null, code: null, meta: null, players: null, game: null, presence: {}, live: null, secret: null,
+  uid: null, code: null, meta: null, players: null, teams: null, rawGame: null, game: null, used: null, presence: {}, live: null, secret: null, lock: null,
   needsJoin: false, closed: null, offline: false, busy: false, hadMembership: false,
 };
 let unsubs = [];
 let viewKey = null;
 let view = null; // current view's update function
 let rafPending = false;
+let secretUnsub = null, secretSig = null;
 
 /* ---------- helpers ---------- */
 function toast(msg, kind = 'error') {
@@ -28,11 +29,12 @@ function toast(msg, kind = 'error') {
 const teamColor = (t) => TEAM_COLORS[t % TEAM_COLORS.length];
 const teamName = (t) => (S.meta && arr(S.meta.settings.teamNames)[t]) || `Team ${t + 1}`;
 const savedName = () => localStorage.getItem(LS_NAME) || '';
-const roster = (team) => Object.entries(S.players || {})
-  .filter(([, p]) => p.team === team).sort((a, b) => a[1].joinedAt - b[1].joinedAt).map(([uid, p]) => ({ uid, ...p }));
+const roster = (team) => teamMembers({ teams: S.teams }, team)
+  .filter((uid) => S.players && S.players[uid]).map((uid) => ({ uid, ...S.players[uid] }));
 const isHost = () => S.meta && S.meta.hostUid === S.uid;
 const online = (uid) => S.presence && S.presence[uid] === true;
-const myTeam = () => (S.players && S.players[S.uid] ? S.players[S.uid].team : null);
+const myTeam = () => teamOf({ teams: S.teams }, S.uid);
+const roomView = () => ({ meta: S.meta, players: S.players, teams: S.teams || {}, game: S.rawGame, used: arr(S.used), secret: S.secret, lock: S.lock });
 const inviteLink = () => `${location.origin}${location.pathname}?room=${S.code}`;
 
 /** Runs a server action once at a time (guards against double clicks). */
@@ -44,14 +46,17 @@ async function run(fn, { quiet } = {}) {
   catch (e) { if (!quiet) toast(api.friendlyError(e)); }
   finally { S.busy = false; root.classList.remove('busy'); }
 }
-const act = (name, payload) => run(() => api.action(name, { code: S.code, ...payload }));
+const act = (name, payload, extraEnv) => run(() => api.action(name, roomView(), S.uid, S.code, payload, extraEnv));
+/** Fire-and-forget helper action; failures are expected when another client got there first. */
+const quietAct = (name, payload) => api.action(name, roomView(), S.uid, S.code, payload).catch(() => {});
 
 /* ---------- room lifecycle ---------- */
 function stopListeners() { unsubs.forEach((u) => { try { u(); } catch (_) { /* ignore */ } }); unsubs = []; }
 
 function startRoom(code) {
   stopListeners();
-  Object.assign(S, { code, meta: null, players: null, game: null, presence: {}, live: null, secret: null, needsJoin: false, closed: null, hadMembership: false });
+  Object.assign(S, { code, meta: null, players: null, teams: null, rawGame: null, game: null, used: null, presence: {}, live: null, secret: null, lock: null, needsJoin: false, closed: null, hadMembership: false });
+  secretSig = null;
   viewKey = null;
   history.replaceState(null, '', `${location.pathname}?room=${code}`);
   localStorage.setItem(LS_ROOM, code);
@@ -66,22 +71,41 @@ function startRoom(code) {
     S[key] = v;
     if (key === 'meta' && v) S.hadMembership = true;
     if (key === 'meta' && v === null && S.hadMembership) { S.closed = 'This room has been closed.'; stopListeners(); }
+    if (S.rawGame && S.meta) S.game = decorateGame(S.rawGame, S.meta.settings.teamCount);
+    else if (!S.rawGame) S.game = null;
     if (extra) extra(v);
     schedule();
   }, key === 'meta' ? fail : (e) => { if (!/permission_denied/i.test(e.code || '')) toast(api.friendlyError(e)); }));
   sub(api.roomRef(code, 'meta'), 'meta');
   sub(api.roomRef(code, 'players'), 'players');
-  sub(api.roomRef(code, 'game'), 'game');
+  sub(api.roomRef(code, 'teams'), 'teams');
+  sub(api.roomRef(code, 'used'), 'used');
+  sub(api.roomRef(code, 'lock'), 'lock');
+  sub(api.roomRef(code, 'game'), 'rawGame', (v) => watchSecret(v));
   sub(api.presenceRef(code), 'presence', (v) => { S.presence = v || {}; });
   sub(api.liveRef(code), 'live');
-  sub(api.secretRef(code, S.uid), 'secret');
   unsubs.push(api.trackPresence(code, S.uid));
   unsubs.push(api.listen(api.connectionRef(), (c) => { S.offline = c === false; schedule(); }));
 }
 
+/**
+ * The target is only readable for people allowed to see it. For the active Guesser the read is denied (and the listener is cancelled by
+ * Firebase), so the listener is re-attached whenever the turn, phase or roles change.
+ */
+function watchSecret(g) {
+  const sig = g ? `${g.turn}|${g.state}|${g.psychicUid}|${g.guesserUid}` : null;
+  if (sig === secretSig) return;
+  secretSig = sig;
+  if (secretUnsub) { secretUnsub(); unsubs = unsubs.filter((u) => u !== secretUnsub); secretUnsub = null; }
+  S.secret = null;
+  if (!g || g.state === STATES.LOBBY) return;
+  secretUnsub = api.listen(api.roomRef(S.code, 'secret'), (v) => { S.secret = v; schedule(); }, () => {});
+  unsubs.push(secretUnsub);
+}
+
 function goHome() {
   stopListeners();
-  Object.assign(S, { code: null, meta: null, players: null, game: null, needsJoin: false, closed: null, hadMembership: false });
+  Object.assign(S, { code: null, meta: null, players: null, teams: null, rawGame: null, game: null, needsJoin: false, closed: null, hadMembership: false });
   localStorage.removeItem(LS_ROOM);
   history.replaceState(null, '', location.pathname);
   viewKey = null;
@@ -90,7 +114,7 @@ function goHome() {
 
 async function leave() {
   if (!confirm('Leave this room?')) return;
-  const ok = await run(async () => { await api.action('removePlayer', { code: S.code }); return true; }, { quiet: false });
+  const ok = await run(async () => { await api.action('removePlayer', roomView(), S.uid, S.code); return true; });
   if (ok) goHome();
 }
 
@@ -145,8 +169,8 @@ function landingView() {
     submitLabel: 'Create room',
     onSubmit: async (settings) => {
       const n = readName(name); if (!n) return;
-      const res = await run(() => api.createRoom(n, settings));
-      if (res) startRoom(res.code);
+      const res = await run(() => api.createRoom(S.uid, n, settings));
+      if (res) startRoom(res);
     },
   });
   const rejoin = localStorage.getItem(LS_ROOM);
@@ -163,7 +187,7 @@ function landingView() {
             const code = normalizeRoomCode(codeIn.value);
             if (!isValidRoomCode(code)) return toast('Room codes are 5 characters, like K7QMD.');
             const n = readName(name); if (!n) return;
-            const res = await run(async () => { await api.action('joinRoom', { code, name: n }); return true; });
+            const res = await run(async () => { await api.joinRoom(S.uid, code, n); return true; });
             if (res) startRoom(code);
           },
         }, h('label', { class: 'field' }, 'Room code', codeIn), h('button', { class: 'btn primary', type: 'submit' }, 'Join room')),
@@ -181,7 +205,7 @@ function joinView() {
       onsubmit: async (e) => {
         e.preventDefault();
         const n = readName(name); if (!n) return;
-        const ok = await run(async () => { await api.action('joinRoom', { code: S.code, name: n }); return true; });
+        const ok = await run(async () => { await api.joinRoom(S.uid, S.code, n); return true; });
         if (ok) startRoom(S.code);
       },
     }, h('button', { class: 'btn primary', type: 'submit' }, 'Join')),
@@ -260,7 +284,7 @@ function lobbyView() {
         mine ? h('button', { class: 'btn small ghost', onclick: () => act('setTeam', { team: null }) }, 'Leave team')
           : h('button', { class: 'btn small', disabled: full, onclick: () => act('setTeam', { team: t }) }, full ? 'Team full' : 'Join team'));
     }));
-    const un = Object.entries(S.players).map(([uid, p]) => ({ uid, ...p })).filter((p) => p.team == null || p.team >= s.teamCount);
+    const un = Object.entries(S.players).map(([uid, p]) => ({ uid, ...p })).filter((p) => { const t = teamOf({ teams: S.teams }, p.uid); return t === null || t >= s.teamCount; });
     replace(unassignedEl, h('h3', {}, 'Waiting for a team'), un.length ? h('ul', {}, un.map((p) => playerLine(p, host && h('span', { class: 'row-actions' },
       h('select', {
         'aria-label': `Assign ${p.name} to a team`,
@@ -268,12 +292,12 @@ function lobbyView() {
       }, h('option', { value: '' }, 'Assign…'), Array.from({ length: s.teamCount }, (_, t) => h('option', { value: t }, teamName(t)))),
       p.uid !== S.uid && h('button', { class: `btn tiny ${online(p.uid) ? '' : 'danger'}`, onclick: () => act('removePlayer', { targetUid: p.uid }) }, 'Remove'))))) : h('p', { class: 'muted' }, 'Everyone is on a team.'));
 
-    const ready = lobbyReadiness({ meta: m, players: S.players });
+    const ready = lobbyReadiness({ meta: m, teams: S.teams || {} });
     const hostOffline = !host && !online(m.hostUid) && Object.keys(S.presence).length > 0;
     replace(statusEl, h('h2', {}, host ? 'Ready to start?' : 'Waiting for the host'),
       ready.ready ? h('p', { class: 'ok' }, 'All teams are full.') : h('ul', { class: 'problems' }, ready.problems.map((p) => h('li', {}, p))),
       host ? h('button', { class: 'btn primary big', disabled: !ready.ready, onclick: () => act('startGame') }, 'Start game') : null,
-      hostOffline ? h('div', {}, h('p', { class: 'muted' }, 'The host appears to be disconnected.'), h('button', { class: 'btn small', onclick: () => act('claimHost') }, 'Take over as host')) : null);
+      hostOffline ? h('div', {}, h('p', { class: 'muted' }, 'The host appears to be disconnected.'), h('button', { class: 'btn small', onclick: () => act('claimHost', {}, { hostOnline: online(m.hostUid) }) }, 'Take over as host')) : null);
 
     if (form) {
       const sig = JSON.stringify(s);
@@ -296,7 +320,7 @@ function gameView() {
     pending = pos;
     const wait = Math.max(0, 60 - (Date.now() - lastSent));
     clearTimeout(timer);
-    timer = setTimeout(() => { lastSent = Date.now(); api.liveRef(S.code).set(pending).catch(() => {}); }, wait);
+    timer = setTimeout(() => { lastSent = Date.now(); api.liveRef(S.code).set({ pos: pending, turn }).catch(() => {}); }, wait);
   };
   const dial = createDial({ bandsFor: scoringBands, onInput: pushLive, onCommit: pushLive });
   unsubs.push(() => clearTimeout(timer));
@@ -309,6 +333,7 @@ function gameView() {
     h('button', { class: 'btn small', 'aria-label': 'Move needle right', onclick: () => { dial.setGuess(dial.getGuess() + 1); pushLive(dial.getGuess()); } }, '+1 ▶'));
   const controls = h('div', { class: 'controls' });
   const resultEl = h('div');
+  let wroteTarget = false, triedReveal = false;
   put(topBar(), h('div', { class: 'offline-slot' }), scoreEl, statusEl, promptEl, dialWrap, nudge, controls, resultEl);
 
   return function update() {
@@ -323,16 +348,25 @@ function gameView() {
     replace(promptEl, h('span', {}, g.prompt.low), h('span', {}, g.prompt.high));
 
     const secretTarget = S.secret && S.secret.turn === g.turn ? S.secret.target : null;
+    const lock = S.lock && S.lock.turn === g.turn ? S.lock : null;
+    // Trusted-client steps: the Psychic's browser rolls the target (only they and spectators can read it),
+    // and any browser that can see the target publishes the result once the Guesser has locked in.
+    if (g.state === STATES.CLUE && isPsychic && secretTarget === null && !wroteTarget) { wroteTarget = true; quietAct('writeTarget'); }
+    if (g.state === STATES.GUESSING && lock && !isGuesser && secretTarget !== null && !triedReveal && !S.busy) {
+      triedReveal = true;
+      setTimeout(() => quietAct('reveal'), isPsychic ? 100 : 600);
+    }
     const result = g.state === STATES.REVEAL ? g.result : null;
     const target = result ? result.target : isGuesser ? null : secretTarget;
     const justRevealed = result && lastState !== STATES.REVEAL;
     dial.setTarget(target, justRevealed);
 
-    const canMove = isGuesser && g.state === STATES.GUESSING;
+    const canMove = isGuesser && g.state === STATES.GUESSING && !lock;
     dial.setInteractive(canMove);
     nudge.hidden = !canMove;
     if (result) dial.setGuess(result.guess);
-    else if (!isGuesser || g.state !== STATES.GUESSING) dial.setGuess(g.state === STATES.GUESSING && typeof S.live === 'number' ? S.live : 50);
+    else if (lock) dial.setGuess(lock.guess);
+    else if (!isGuesser || g.state !== STATES.GUESSING) dial.setGuess(g.state === STATES.GUESSING && S.live && S.live.turn === g.turn && typeof S.live.pos === 'number' ? S.live.pos : 50);
     dialWrap.classList.toggle('locked', !canMove);
     lastState = g.state;
 
@@ -344,7 +378,7 @@ function gameView() {
           : `Spectating. You can see the target; ${nm(g.psychicUid)} is thinking of a clue.`;
     } else if (g.state === STATES.GUESSING) {
       info = isPsychic ? 'Your teammate is placing the needle. Don\'t give any more hints!'
-        : isGuesser ? 'Drag the needle (or use arrow keys) to where you think the target is, then lock it in.'
+        : isGuesser ? (lock ? 'Guess locked in – revealing…' : 'Drag the needle (or use arrow keys) to where you think the target is, then lock it in.')
           : `Spectating — watch ${nm(g.guesserUid)} move the needle live.`;
     } else info = 'Result';
     replace(statusEl,
@@ -354,11 +388,12 @@ function gameView() {
       g.state !== STATES.REVEAL && h('p', {}, info));
 
     const btns = [];
-    if (g.state === STATES.CLUE && isPsychic) btns.push(h('button', { class: 'btn primary big', onclick: () => act('clueGiven') }, 'I\'ve given my clue'));
-    if (g.state === STATES.GUESSING && isGuesser) btns.push(h('button', {
+    if (g.state === STATES.CLUE && isPsychic) btns.push(h('button', { class: 'btn primary big', disabled: secretTarget === null, onclick: () => act('clueGiven') }, 'I\'ve given my clue'));
+    if (g.state === STATES.GUESSING && isGuesser && !lock) btns.push(h('button', {
       class: 'btn primary big',
-      onclick: () => act('submitGuess', { guess: dial.getGuess() }),
+      onclick: () => act('lockGuess', { guess: dial.getGuess() }),
     }, 'Lock in guess'));
+    if (g.state === STATES.GUESSING && lock && !isGuesser) btns.push(h('button', { class: 'btn primary big', onclick: () => act('reveal') }, 'Reveal result'));
     replace(controls, btns);
 
     if (result) {

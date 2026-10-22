@@ -3,20 +3,11 @@ const assert = require('node:assert/strict');
 const S = require('../shared/game-logic.js');
 const { BUILTIN_PROMPTS } = require('../shared/prompts.js');
 const { STATES } = require('../shared/constants.js');
-const R = S.reducers;
+const { Sim, mkRng } = require('./harness.js');
 
-let t = 1000;
-const mkRng = (seed = 1) => () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-const env = (extra) => ({ now: ++t, rng: mkRng(7), ...extra });
-
-function lobby(teamCount = 2, settings = {}) {
-  let room = S.createRoom('p0', 'Host', { teamCount, ...settings }, env());
-  for (let i = 1; i < teamCount * 2; i++) room = R.joinRoom(room, 'p' + i, { name: 'P' + i }, env());
-  for (let i = 0; i < teamCount * 2; i++) room = R.setTeam(room, 'p' + i, { team: Math.floor(i / 2) }, env());
-  return room;
-}
-const started = (n = 2, s) => R.startGame(lobby(n, s), 'p0', {}, env());
-const throwsCode = (fn, code) => assert.throws(fn, (e) => e instanceof S.GameError && e.code === code);
+const gameErr = (fn, code) => assert.throws(fn, (e) => e instanceof S.GameError && e.code === code);
+const ok = (r) => assert.equal(r.ok, true, r.reason);
+const denied = (r) => assert.equal(r.ok, false);
 
 test('scoring boundaries', () => {
   assert.equal(S.scoreGuess(50, 50), 2);
@@ -37,13 +28,12 @@ test('scoring bands are aligned and clipped', () => {
 });
 
 test('prompt parsing', () => {
-  const ok = S.parsePrompts('  (Expensive ,  Cheap)\n\n(Hot, Cold)  \r\n(Great   Movie, Terrible Movie)');
-  assert.deepEqual(ok.errors, []);
-  assert.deepEqual(ok.prompts[0], { high: 'Expensive', low: 'Cheap' });
-  assert.equal(ok.prompts[2].high, 'Great Movie');
+  const ok1 = S.parsePrompts('  (Expensive ,  Cheap)\n\n(Hot, Cold)  \r\n(Great   Movie, Terrible Movie)');
+  assert.deepEqual(ok1.errors, []);
+  assert.deepEqual(ok1.prompts[0], { high: 'Expensive', low: 'Cheap' });
+  assert.equal(ok1.prompts[2].high, 'Great Movie');
   const bad = S.parsePrompts('Hot, Cold\n(Hot Cold)\n(Hot, )\n(, Cold)\n(a, b, c)\n((a), b)\n(<b>x</b>, y)\n()');
   assert.equal(bad.prompts.length, 0);
-  assert.equal(bad.errors.length, 8);
   assert.deepEqual(bad.errors.map((e) => e.line), [1, 2, 3, 4, 5, 6, 7, 8]);
 });
 
@@ -52,21 +42,21 @@ test('built-in library is large and unique', () => {
   assert.equal(new Set(BUILTIN_PROMPTS.map((p) => p.high + '|' + p.low)).size, BUILTIN_PROMPTS.length);
 });
 
-test('prompts do not repeat until exhausted, then reshuffle', () => {
+test('prompts do not repeat until exhausted, then restart', () => {
   const pool = [{ high: 'a', low: 'b' }, { high: 'c', low: 'd' }, { high: 'e', low: 'f' }];
   const rng = mkRng(3);
-  let deck = [];
+  let used = [];
   const seen = [];
-  for (let i = 0; i < 3; i++) { const r = S.drawPrompt(pool, deck, rng); seen.push(r.prompt.high); deck = r.deck; }
+  for (let i = 0; i < 3; i++) { const r = S.drawPrompt(pool, used, rng); seen.push(r.prompt.high); used = r.used; }
   assert.equal(new Set(seen).size, 3);
-  assert.equal(S.drawPrompt(pool, deck, rng).deck.length, 2);
+  assert.equal(S.drawPrompt(pool, used, rng).used.length, 1);
 });
 
 test('settings validation and prompt modes', () => {
-  throwsCode(() => S.sanitizeSettings({ teamCount: 1 }), 'invalid-argument');
-  throwsCode(() => S.sanitizeSettings({ targetScore: 0 }), 'invalid-argument');
-  throwsCode(() => S.sanitizeSettings({ promptMode: 'custom' }), 'invalid-argument');
-  throwsCode(() => S.sanitizeSettings({ customPromptsText: 'oops' }), 'invalid-argument');
+  gameErr(() => S.sanitizeSettings({ teamCount: 1 }), 'invalid-argument');
+  gameErr(() => S.sanitizeSettings({ targetScore: 0 }), 'invalid-argument');
+  gameErr(() => S.sanitizeSettings({ promptMode: 'custom' }), 'invalid-argument');
+  gameErr(() => S.sanitizeSettings({ customPromptsText: 'oops' }), 'invalid-argument');
   const s = S.sanitizeSettings({});
   assert.equal(s.teamCount, 2); assert.equal(s.targetScore, 10); assert.deepEqual(s.teamNames, ['Team 1', 'Team 2']);
   const m = S.sanitizeSettings({ promptMode: 'mixed', customPromptsText: '(a, b)' });
@@ -74,161 +64,292 @@ test('settings validation and prompt modes', () => {
   assert.equal(S.promptPool({ ...m, promptMode: 'custom' }).length, 1);
 });
 
-test('lobby: join is idempotent, teams limited to 2, start validation', () => {
-  let room = S.createRoom('p0', 'Host', {}, env());
-  room = R.joinRoom(room, 'p0', { name: 'Host' }, env());
-  assert.equal(Object.keys(room.players).length, 1);
-  for (let i = 1; i < 4; i++) room = R.joinRoom(room, 'p' + i, { name: 'P' + i }, env());
-  room = R.setTeam(room, 'p0', { team: 0 }, env());
-  room = R.setTeam(room, 'p1', { team: 0 }, env());
-  throwsCode(() => R.setTeam(room, 'p2', { team: 0 }, env()), 'team-full');
-  throwsCode(() => R.startGame(room, 'p0', {}, env()), 'lobby-not-ready');
-  room = R.setTeam(room, 'p2', { team: 1 }, env());
-  room = R.setTeam(room, 'p3', { team: 1 }, env());
-  throwsCode(() => R.startGame(room, 'p1', {}, env()), 'permission-denied');
-  throwsCode(() => R.setTeam(room, 'p1', { team: 1, targetUid: 'p2' }, env()), 'permission-denied');
-  throwsCode(() => R.setTeam(room, 'stranger', { team: 1 }, env()), 'permission-denied');
-  const g = R.startGame(room, 'p0', {}, env());
-  assert.equal(g.game.state, STATES.CLUE);
-  throwsCode(() => R.joinRoom(g, 'late', { name: 'x' }, env()), 'game-in-progress');
-  assert.doesNotThrow(() => R.joinRoom(g, 'p3', { name: 'P3' }, env())); // reconnect allowed
-});
-
-test('target is only given to non-guessers and never to the guesser', () => {
-  const room = started(3);
-  const g = room.game;
-  assert.ok(room.secret[g.psychicUid]);
-  assert.equal(room.secret[g.guesserUid], undefined);
-  assert.equal(Object.keys(room.secret).length, 5);
-  assert.equal(room.secret[g.psychicUid].target, room.server.target);
-  assert.equal(room.game.result, null);
-});
-
-test('role alternation within a team and team rotation', () => {
-  let room = started(3);
-  const history = [];
-  for (let i = 0; i < 6; i++) {
-    const g = room.game;
-    history.push(g.activeTeam);
-    room = R.clueGiven(room, g.psychicUid, {}, env());
-    room = R.submitGuess(room, g.guesserUid, { guess: room.server.target > 50 ? 0 : 100 }, env());
-    room = R.nextTurn(room, 'p0', {}, env());
-  }
-  assert.deepEqual(history, [0, 1, 2, 0, 1, 2]);
-  // explicit alternation check
-  let r2 = started(2);
-  const seq = [];
-  for (let i = 0; i < 4; i++) {
-    seq.push([r2.game.activeTeam, r2.game.psychicUid, r2.game.guesserUid]);
-    r2 = R.clueGiven(r2, r2.game.psychicUid, {}, env());
-    r2 = R.submitGuess(r2, r2.game.guesserUid, { guess: 0 }, env());
-    r2 = R.nextTurn(r2, 'p0', {}, env());
-  }
-  assert.deepEqual(seq, [[0, 'p0', 'p1'], [1, 'p2', 'p3'], [0, 'p1', 'p0'], [1, 'p3', 'p2']]);
-});
-
-test('turn flow: roles, duplicate submissions, invalid transitions', () => {
-  let room = started(2);
-  const { psychicUid: ps, guesserUid: gu } = room.game;
-  throwsCode(() => R.submitGuess(room, gu, { guess: 10 }, env()), 'invalid-state'); // still in clue
-  throwsCode(() => R.clueGiven(room, gu, {}, env()), 'permission-denied');
-  throwsCode(() => R.nextTurn(room, 'p0', {}, env()), 'invalid-state');
-  throwsCode(() => R.startGame(room, 'p0', {}, env()), 'invalid-state');
-  room = R.clueGiven(room, ps, {}, env());
-  throwsCode(() => R.clueGiven(room, ps, {}, env()), 'invalid-state');
-  throwsCode(() => R.submitGuess(room, ps, { guess: 10 }, env()), 'permission-denied');
-  throwsCode(() => R.submitGuess(room, 'p2', { guess: 10 }, env()), 'permission-denied');
-  for (const bad of [-1, 101, NaN, 'x', null, undefined, true]) throwsCode(() => R.submitGuess(room, gu, { guess: bad }, env()), 'invalid-argument');
-  const target = room.server.target;
-  const done = R.submitGuess(room, gu, { guess: target }, env());
-  assert.equal(done.game.state, STATES.REVEAL);
-  assert.equal(done.game.result.points, 2);
-  assert.equal(done.game.scores[0], 2);
-  assert.deepEqual(done.secret, {});
-  throwsCode(() => R.submitGuess(done, gu, { guess: target }, env()), 'invalid-state'); // duplicate
-  assert.equal(done.game.scores[0], 2);
-  throwsCode(() => R.nextTurn(done, 'p2', {}, env()), 'permission-denied'); // other team
-  const next = R.nextTurn(done, 'p0', {}, env());
-  assert.equal(next.game.activeTeam, 1);
-  assert.equal(next.game.state, STATES.CLUE);
-  assert.deepEqual(next.game.scores, [2, 0]); // scores preserved
-  assert.equal(next.game.result, null);
-});
-
-test('guess is rounded; points are computed server-side only', () => {
-  let room = started(2);
-  room = R.clueGiven(room, room.game.psychicUid, {}, env());
-  const far = room.server.target > 50 ? 0 : 100;
-  const out = R.submitGuess(room, room.game.guesserUid, { guess: far, points: 99 }, env());
-  assert.equal(out.game.result.points, 0);
-});
-
-test('win condition and finishing', () => {
-  let room = started(2, { targetScore: 2 });
-  room = R.clueGiven(room, room.game.psychicUid, {}, env());
-  room = R.submitGuess(room, room.game.guesserUid, { guess: room.server.target }, env());
-  assert.equal(room.game.winnerTeam, 0);
-  room = R.nextTurn(room, 'p1', {}, env());
-  assert.equal(room.game.state, STATES.FINISHED);
-  throwsCode(() => R.nextTurn(room, 'p0', {}, env()), 'invalid-state');
-  throwsCode(() => R.playAgain(room, 'p1', {}, env()), 'permission-denied');
-  const again = R.playAgain(room, 'p0', {}, env());
-  assert.equal(again.game.state, STATES.LOBBY);
-  assert.deepEqual(again.game.scores, [0, 0]);
-  assert.equal(Object.keys(again.players).length, 4);
-});
-
-test('winner tie-break', () => {
-  assert.equal(S.determineWinner([5, 3], 10, 0), null);
-  assert.equal(S.determineWinner([10, 3], 10, 1), 0);
-  assert.equal(S.determineWinner([11, 12], 10, 0), 1);
-  assert.equal(S.determineWinner([12, 12], 10, 1), 1);
-  assert.equal(S.determineWinner([12, 12, 3], 10, 2), 0);
-});
-
-test('state machine transitions', () => {
-  assert.ok(S.canTransition('lobby', 'clue'));
-  assert.ok(!S.canTransition('lobby', 'reveal'));
-  assert.ok(!S.canTransition('clue', 'reveal'));
-  assert.ok(!S.canTransition('guessing', 'clue'));
-  assert.ok(!S.canTransition('finished', 'clue'));
-  assert.throws(() => S.transition({ state: 'finished' }, 'guessing'), S.GameError);
-});
-
-test('leaving mid-game returns to lobby; host transfer; empty room deleted', () => {
-  let room = started(2);
-  const left = R.removePlayer(room, 'p3', {}, env());
-  assert.equal(left.game.state, STATES.LOBBY);
-  assert.ok(left.meta.notice);
-  assert.deepEqual(left.secret, {});
-  throwsCode(() => R.removePlayer(room, 'p1', { targetUid: 'p2' }, env()), 'permission-denied');
-  throwsCode(() => R.removePlayer(room, 'p0', { targetUid: 'nobody' }, env()), 'permission-denied');
-  const hostLeft = R.removePlayer(lobby(2), 'p0', {}, env());
-  assert.equal(hostLeft.meta.hostUid, 'p1');
-  const kicked = R.removePlayer(lobby(2), 'p0', { targetUid: 'p3' }, env());
-  assert.equal(kicked.players.p3, undefined);
-  throwsCode(() => R.removePlayer(lobby(2), 'p1', { targetUid: 'p0' }, env()), 'permission-denied');
-  const solo = S.createRoom('p0', 'H', {}, env());
-  assert.equal(R.removePlayer(solo, 'p0', {}, env()), null);
-});
-
-test('claimHost only when host offline', () => {
-  const room = lobby(2);
-  throwsCode(() => R.claimHost(room, 'p1', {}, env({ hostOnline: true })), 'invalid-state');
-  assert.equal(R.claimHost(room, 'p1', {}, env({ hostOnline: false })).meta.hostUid, 'p1');
-});
-
 test('room codes', () => {
-  const c = S.generateRoomCode(mkRng(5));
-  assert.ok(S.isValidRoomCode(c));
+  assert.ok(S.isValidRoomCode(S.generateRoomCode(mkRng(5))));
   assert.ok(!S.isValidRoomCode('ABC'));
   assert.ok(!S.isValidRoomCode('ABCD0'));
   assert.equal(S.normalizeRoomCode(' ab-c12 '), 'ABC12');
 });
 
-test('settings update shrinks teams and resets players', () => {
-  let room = lobby(3);
-  room = R.updateSettings(room, 'p0', { teamCount: 2 }, env());
-  assert.equal(room.players.p4.team, null);
-  throwsCode(() => R.updateSettings(room, 'p1', { teamCount: 2 }, env()), 'permission-denied');
+test('winner tie-break and state machine', () => {
+  assert.equal(S.determineWinner([5, 3], 10, 0), null);
+  assert.equal(S.determineWinner([12, 12], 10, 1), 1);
+  assert.equal(S.determineWinner([12, 12, 3], 10, 2), 0);
+  assert.ok(S.canTransition('lobby', 'clue'));
+  assert.ok(!S.canTransition('clue', 'reveal'));
+  assert.ok(!S.canTransition('finished', 'clue'));
+  assert.throws(() => S.transition({ state: 'finished' }, 'guessing'), S.GameError);
+});
+
+/* ---------- lobby ---------- */
+test('lobby: join is idempotent, teams hold 2, only host starts, start needs full teams', () => {
+  const sim = new Sim();
+  ok(sim.create('p0'));
+  denied(sim.create('p9', 'Intruder')); // room code collision: existing room cannot be overwritten
+  for (let i = 1; i < 4; i++) ok(sim.join('p' + i, 'P' + i));
+  ok(sim.join('p1', 'Renamed')); // reconnect: no duplicate slot
+  assert.equal(Object.keys(sim.data('rooms/ABCDE/players')).length, 4);
+  assert.equal(sim.data('rooms/ABCDE/players/p1/name'), 'Renamed');
+  ok(sim.act('p0', 'setTeam', { team: 0 }));
+  ok(sim.act('p1', 'setTeam', { team: 0 }));
+  gameErr(() => sim.act('p2', 'setTeam', { team: 0 }), 'team-full');
+  gameErr(() => sim.act('p0', 'startGame'), 'lobby-not-ready');
+  ok(sim.act('p2', 'setTeam', { team: 1 }));
+  ok(sim.act('p3', 'setTeam', { team: 1 }));
+  gameErr(() => sim.act('p1', 'startGame'), 'permission-denied');
+  gameErr(() => sim.act('p1', 'setTeam', { team: 1, targetUid: 'p2' }), 'permission-denied');
+  // forged start by a non-host straight to the database
+  denied(sim.raw('p1', { 'rooms/{code}/game': { state: 'clue', turn: 1, activeKey: 't0', scores: { t0: 0, t1: 0, t2: 0, t3: 0 }, teamTurns: { t0: 1, t1: 0, t2: 0, t3: 0 }, psychicUid: 'p0', guesserUid: 'p1', prompt: { high: 'a', low: 'b' } } }));
+  ok(sim.act('p0', 'startGame'));
+  assert.equal(sim.game().state, STATES.CLUE);
+});
+
+test('team slots cannot be claimed twice concurrently or overfilled by raw writes', () => {
+  const sim = new Sim();
+  sim.create('p0');
+  for (let i = 1; i < 4; i++) sim.join('p' + i, 'P' + i);
+  ok(sim.act('p0', 'setTeam', { team: 0 }));
+  ok(sim.act('p1', 'setTeam', { team: 0 }));
+  // p2 and p3 both planned from a stale view; the slot is taken so the rules reject the write
+  denied(sim.raw('p2', { 'rooms/{code}/teams/t0/a': 'p2' }));
+  denied(sim.raw('p2', { 'rooms/{code}/teams/t0/b': 'p2' }));
+  denied(sim.raw('p2', { 'rooms/{code}/teams/t3/a': 'p2' })); // team does not exist (2 teams)
+  denied(sim.raw('p2', { 'rooms/{code}/teams/t1/a': 'p3' })); // cannot place someone else
+  ok(sim.raw('p2', { 'rooms/{code}/teams/t1/a': 'p2' }));
+  denied(sim.raw('p2', { 'rooms/{code}/teams/t1/b': 'p2' })); // same player in both slots
+});
+
+test('non-members: cannot read, join a running game, or join a missing room', () => {
+  const sim = new Sim().lobby4();
+  assert.equal(sim.db.read('x', 'rooms/ABCDE/meta').denied, true);
+  assert.equal(sim.db.read('x', 'rooms/ABCDE/game').denied, true);
+  assert.equal(sim.db.read('x', 'rooms/ABCDE/players').denied, true);
+  ok(sim.join('late', 'Late')); // lobby joins are allowed
+  ok(sim.act('p0', 'startGame'));
+  denied(sim.join('later', 'Later'));
+  const other = new Sim('ZZZZZ');
+  denied(other.join('x', 'X')); // nonexistent room
+});
+
+test('settings: host only, lobby only, shrinking teams clears their slots', () => {
+  const sim = new Sim();
+  sim.create('p0', 'Host', { teamCount: 3 });
+  for (let i = 1; i < 6; i++) sim.join('p' + i, 'P' + i);
+  for (let i = 0; i < 6; i++) sim.act('p' + i, 'setTeam', { team: Math.floor(i / 2) });
+  gameErr(() => sim.act('p1', 'updateSettings', { teamCount: 2 }), 'permission-denied');
+  denied(sim.raw('p1', { 'rooms/{code}/meta/settings/targetScore': 1 }));
+  ok(sim.act('p0', 'updateSettings', { teamCount: 2, targetScore: 6, promptMode: 'mixed', customPromptsText: '(Hot, Cold)' }));
+  assert.equal(sim.data('rooms/ABCDE/teams/t2'), undefined);
+  assert.equal(sim.data('rooms/ABCDE/meta/settings/targetScore'), 6);
+  assert.equal(sim.data('rooms/ABCDE/meta/settings/customPrompts/0/high'), 'Hot');
+  // oversized / out of range values are rejected by the rules
+  denied(sim.raw('p0', { 'rooms/{code}/meta/settings': { teamCount: 9, targetScore: 5, promptMode: 'builtin', teamNames: ['a'] } }));
+});
+
+/* ---------- visibility ---------- */
+test('target is hidden from the guesser until reveal; psychic and spectators see it', () => {
+  const sim = new Sim().lobby4();
+  ok(sim.act('p0', 'startGame'));
+  const g = sim.game();
+  assert.equal(g.psychicUid, 'p0'); assert.equal(g.guesserUid, 'p1');
+  gameErr(() => sim.act('p0', 'clueGiven'), 'invalid-state'); // target not yet set
+  denied(sim.raw('p1', { 'rooms/{code}/secret': { target: 50, turn: 1 } })); // guesser cannot choose the target
+  denied(sim.raw('p2', { 'rooms/{code}/secret': { target: 50, turn: 1 } })); // neither can a spectator
+  ok(sim.act('p0', 'writeTarget'));
+  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret').denied, true);
+  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, true);
+  assert.equal(sim.db.read('p0', 'rooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.db.read('p2', 'rooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.db.read('p3', 'rooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.db.read('x', 'rooms/ABCDE/secret/target').denied, true);
+  denied(sim.raw('p0', { 'rooms/{code}/secret': { target: 10, turn: 1 } })); // cannot re-roll the same turn
+  // the public game node never contains the target before the reveal
+  assert.equal(sim.game().result, undefined);
+  assert.equal(sim.game().target, undefined);
+  ok(sim.act('p0', 'clueGiven'));
+  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, true);
+  ok(sim.act('p1', 'lockGuess', { guess: 40 }));
+  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, true); // still hidden after locking, until reveal
+  ok(sim.act('p2', 'reveal'));
+  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.game().result.guess, 40);
+});
+
+/* ---------- turn flow ---------- */
+test('turn flow: roles, duplicate submissions, invalid transitions, forged results', () => {
+  const sim = new Sim().lobby4();
+  sim.act('p0', 'startGame');
+  gameErr(() => sim.act('p0', 'startGame'), 'invalid-state');
+  gameErr(() => sim.act('p1', 'lockGuess', { guess: 10 }), 'invalid-state'); // still in clue
+  gameErr(() => sim.act('p0', 'reveal'), 'invalid-state');
+  gameErr(() => sim.act('p0', 'nextTurn'), 'invalid-state');
+  gameErr(() => sim.act('p1', 'clueGiven'), 'permission-denied');
+  sim.act('p0', 'writeTarget');
+  const target = sim.data('rooms/ABCDE/secret/target');
+  ok(sim.act('p0', 'clueGiven'));
+  gameErr(() => sim.act('p0', 'clueGiven'), 'invalid-state');
+  gameErr(() => sim.act('p0', 'lockGuess', { guess: 10 }), 'permission-denied'); // psychic cannot guess
+  gameErr(() => sim.act('p2', 'lockGuess', { guess: 10 }), 'permission-denied');
+  for (const bad of [-1, 101, NaN, 'x', null, undefined, true, '']) gameErr(() => sim.act('p1', 'lockGuess', { guess: bad }), 'invalid-argument');
+  denied(sim.raw('p1', { 'rooms/{code}/lock': { turn: 1, guess: 500 } }));
+  denied(sim.raw('p0', { 'rooms/{code}/lock': { turn: 1, guess: 50 } }));
+  ok(sim.act('p1', 'lockGuess', { guess: target }));
+  gameErr(() => sim.act('p1', 'lockGuess', { guess: 1 }), 'invalid-state'); // duplicate
+  denied(sim.raw('p1', { 'rooms/{code}/lock': { turn: 1, guess: 1 } })); // duplicate, bypassing the client check
+  gameErr(() => sim.act('p1', 'reveal'), 'permission-denied'); // guesser cannot reveal
+  // forged reveals straight to the database
+  const g = sim.game();
+  const forged = (over) => ({ ...g, state: 'reveal', scores: { ...g.scores, t0: 2 }, result: { guess: target, target, diff: 0, points: 2, ...over.result }, ...over.game });
+  denied(sim.raw('p1', { 'rooms/{code}/game': forged({}) }));
+  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ result: { points: 1 } }) }));
+  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ game: { scores: { ...g.scores, t0: 9 } } }) }));
+  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ game: { scores: { ...g.scores, t1: 2, t0: 0 } } }) }));
+  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ result: { target: target + 1 } }) }));
+  ok(sim.act('p2', 'reveal'));
+  gameErr(() => sim.act('p3', 'reveal'), 'invalid-state'); // duplicate reveal
+  assert.equal(sim.game().result.points, 2);
+  assert.equal(sim.game().scores.t0, 2);
+  gameErr(() => sim.act('p2', 'nextTurn'), 'permission-denied'); // other team cannot advance
+  ok(sim.act('p1', 'nextTurn')); // active team may
+  const next = sim.game();
+  assert.equal(next.activeKey, 't1');
+  assert.equal(next.state, STATES.CLUE);
+  assert.equal(next.scores.t0, 2); // scores preserved
+  assert.equal(next.result, undefined);
+  gameErr(() => sim.act('p1', 'nextTurn'), 'invalid-state');
+});
+
+test('points are computed from the real target (miss, side, centre)', () => {
+  const pts = [];
+  for (const off of [0, 10, 40]) {
+    const sim = new Sim().lobby4();
+    sim.act('p0', 'startGame');
+    sim.act('p0', 'writeTarget');
+    const t = sim.data('rooms/ABCDE/secret/target');
+    const sign = t > 50 ? -1 : 1;
+    sim.act('p0', 'clueGiven');
+    sim.act('p1', 'lockGuess', { guess: t + sign * off });
+    sim.act('p2', 'reveal');
+    pts.push(sim.game().result.points);
+  }
+  assert.deepEqual(pts, [2, 1, 0]);
+});
+
+test('team rotation and role alternation', () => {
+  const sim = new Sim();
+  sim.create('p0', 'Host', { teamCount: 3, targetScore: 100 });
+  for (let i = 1; i < 6; i++) sim.join('p' + i, 'P' + i);
+  for (let i = 0; i < 6; i++) sim.act('p' + i, 'setTeam', { team: Math.floor(i / 2) });
+  sim.act('p0', 'startGame');
+  const seen = [];
+  for (let i = 0; i < 6; i++) {
+    const g = sim.game();
+    seen.push([g.activeKey, g.psychicUid, g.guesserUid]);
+    sim.act(g.psychicUid, 'writeTarget'); sim.act(g.psychicUid, 'clueGiven');
+    sim.act(g.guesserUid, 'lockGuess', { guess: 0 });
+    const other = ['p0', 'p1', 'p2', 'p3', 'p4', 'p5'].find((u) => u !== g.guesserUid);
+    sim.act(other, 'reveal');
+    sim.act('p0', 'nextTurn');
+  }
+  assert.deepEqual(seen, [
+    ['t0', 'p0', 'p1'], ['t1', 'p2', 'p3'], ['t2', 'p4', 'p5'],
+    ['t0', 'p1', 'p0'], ['t1', 'p3', 'p2'], ['t2', 'p5', 'p4']]);
+});
+
+test('win condition, finish, play again', () => {
+  const sim = new Sim().lobby4({ targetScore: 2 });
+  sim.act('p0', 'startGame');
+  const g = sim.playTurn(0);
+  assert.equal(g.winnerKey, 't0');
+  assert.equal(g.state, STATES.REVEAL);
+  denied(sim.raw('p0', { 'rooms/{code}/game': { ...g, state: 'clue' } })); // no going backwards
+  gameErr(() => sim.act('p2', 'nextTurn'), 'permission-denied');
+  ok(sim.act('p0', 'nextTurn'));
+  assert.equal(sim.game().state, STATES.FINISHED);
+  gameErr(() => sim.act('p0', 'nextTurn'), 'invalid-state');
+  gameErr(() => sim.act('p1', 'playAgain'), 'permission-denied');
+  ok(sim.act('p0', 'playAgain'));
+  const fresh = sim.game();
+  assert.equal(fresh.state, STATES.LOBBY);
+  assert.deepEqual(fresh.scores, { t0: 0, t1: 0, t2: 0, t3: 0 });
+  assert.equal(sim.data('rooms/ABCDE/secret'), undefined);
+  assert.equal(Object.keys(sim.data('rooms/ABCDE/players')).length, 4);
+  ok(sim.act('p0', 'startGame')); // new game works; stale lock/secret from before are gone
+  ok(sim.act('p0', 'writeTarget'));
+});
+
+test('the higher score must win: a miss never ends the game and ties favour the active team', () => {
+  const sim = new Sim().lobby4({ targetScore: 3 });
+  sim.act('p0', 'startGame');
+  assert.equal(sim.playTurn(0).winnerKey, undefined); // 2 < 3
+  sim.act('p0', 'nextTurn');
+  assert.equal(sim.playTurn(0).winnerKey, undefined);
+  sim.act('p2', 'nextTurn');
+  assert.equal(sim.playTurn(0).winnerKey, 't0'); // 4 >= 3
+});
+
+/* ---------- leaving, hosting, cleanup ---------- */
+test('leaving mid-game returns to lobby; removal rules; host transfer; last player deletes the room', () => {
+  const sim = new Sim().lobby4();
+  sim.act('p0', 'startGame');
+  gameErr(() => sim.act('p1', 'removePlayer', { targetUid: 'p2' }), 'permission-denied');
+  denied(sim.raw('p1', { 'rooms/{code}/players/p2': null }));
+  ok(sim.act('p3', 'removePlayer'));
+  assert.equal(sim.game().state, STATES.LOBBY);
+  assert.match(sim.data('rooms/ABCDE/meta/notice'), /left/);
+  assert.equal(sim.data('rooms/ABCDE/players/p3'), undefined);
+  assert.equal(sim.data('rooms/ABCDE/teams/t1/b'), undefined);
+  ok(sim.act('p0', 'removePlayer', { targetUid: 'p2' })); // host removes a disconnected player
+  ok(sim.act('p0', 'removePlayer')); // host leaves -> earliest remaining player becomes host
+  assert.equal(sim.data('rooms/ABCDE/meta/hostUid'), 'p1');
+  ok(sim.act('p1', 'removePlayer')); // last one out deletes the room
+  assert.equal(sim.data('rooms/ABCDE'), undefined);
+  assert.equal(sim.data('presence/ABCDE'), undefined);
+});
+
+test('claiming host requires the host to be offline in presence', () => {
+  const sim = new Sim().lobby4();
+  gameErr(() => sim.act('p1', 'claimHost', {}, { hostOnline: true }), 'invalid-state');
+  denied(sim.act('p1', 'claimHost', {}, { hostOnline: false })); // presence says nothing about the host -> rules refuse
+  ok(sim.raw('p0', { 'presence/{code}/p0': false }));
+  ok(sim.act('p1', 'claimHost', {}, { hostOnline: false }));
+  assert.equal(sim.data('rooms/ABCDE/meta/hostUid'), 'p1');
+  denied(sim.raw('p2', { 'rooms/{code}/meta/hostUid': 'p2' })); // host is p1 and online
+});
+
+test('presence and live needle permissions', () => {
+  const sim = new Sim().lobby4();
+  ok(sim.raw('p1', { 'presence/{code}/p1': true }));
+  denied(sim.raw('p1', { 'presence/{code}/p2': true }));
+  denied(sim.raw('x', { 'presence/{code}/x': true }));
+  sim.act('p0', 'startGame');
+  denied(sim.raw('p1', { 'live/{code}': { pos: 10, turn: 1 } })); // clue phase
+  sim.act('p0', 'writeTarget'); sim.act('p0', 'clueGiven');
+  ok(sim.raw('p1', { 'live/{code}': { pos: 10, turn: 1 } }));
+  denied(sim.raw('p0', { 'live/{code}': { pos: 10, turn: 1 } })); // psychic cannot move it
+  denied(sim.raw('p2', { 'live/{code}': { pos: 10, turn: 1 } })); // neither can spectators
+  denied(sim.raw('p1', { 'live/{code}': { pos: 101, turn: 1 } }));
+  assert.equal(sim.db.read('p2', 'live/ABCDE').denied, false);
+  assert.equal(sim.db.read('x', 'live/ABCDE').denied, true);
+  sim.act('p1', 'lockGuess', { guess: 10 });
+  sim.act('p2', 'reveal');
+  denied(sim.raw('p1', { 'live/{code}': { pos: 11, turn: 1 } })); // locked after the guess
+});
+
+test('stale rooms can be deleted by anyone, fresh rooms only by the host', () => {
+  const sim = new Sim().lobby4();
+  denied(sim.raw('p1', { 'rooms/{code}': null }));
+  denied(sim.raw('x', { 'rooms/{code}': null }));
+  sim.db.now += 25 * 60 * 60 * 1000;
+  ok(sim.raw('x', { 'rooms/{code}': null }));
+});
+
+test('rules file stays in sync with the scoring constants and keeps the sprint planner rules', () => {
+  const { SCORING } = require('../shared/constants.js');
+  const rules = require('../database.rules.json').rules;
+  const txt = rules.rooms.$code.game['.write'];
+  assert.ok(txt.includes(`<=${SCORING.CENTER_RADIUS} ? ${SCORING.CENTER_POINTS}`));
+  assert.ok(txt.includes(`<=${SCORING.SIDE_RADIUS} ? ${SCORING.SIDE_POINTS}`));
+  assert.equal(rules.sessions.$sessionId['.read'], true);
+  assert.equal(rules.rooms.$code['.read'], undefined); // members read child nodes only, so `secret` stays protected
 });

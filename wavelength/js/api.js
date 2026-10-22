@@ -1,4 +1,4 @@
-import { normalizeRoomCode } from './shared.js';
+import { normalizeRoomCode, planners, generateRoomCode, createRoomData } from './shared.js';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyDpMvjjDseguE4yK7E3IBdj14PYEXhdEc4', // public web config (not a secret); access is enforced by rules
@@ -13,7 +13,6 @@ const firebaseConfig = {
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.database();
-const callable = firebase.functions().httpsCallable('roomAction');
 
 /** Persistent anonymous identity (survives refreshes). */
 export function ensureUser() {
@@ -28,19 +27,49 @@ export function ensureUser() {
 
 export function friendlyError(e) {
   const code = (e && e.code) || '';
-  if (code === 'functions/unavailable' || code === 'functions/deadline-exceeded' || (e && /network/i.test(e.message || '')))
-    return 'Network problem – check your connection and try again.';
-  if (code === 'functions/not-found' && /not found|NOT_FOUND/i.test(e.message || '') && !/room/i.test(e.message)) return 'The game server is not deployed yet (see README: deploy Cloud Functions).';
+  const msg = (e && e.message) || '';
+  if (/permission[_-]denied/i.test(code + msg))
+    return 'That is not allowed right now – the game may have moved on, or the room is full, started or closed.';
+  if (/network|unavailable|disconnected/i.test(code + msg)) return 'Network problem – check your connection and try again.';
   if (code === 'auth/operation-not-allowed' || code === 'auth/admin-restricted-operation') return 'Anonymous sign-in is disabled in Firebase Authentication.';
-  if (code === 'functions/internal') return 'Server error. Please try again in a moment.';
-  return (e && e.message) || 'Something went wrong.';
+  return msg || 'Something went wrong.';
+}
+export const isDenied = (e) => /permission[_-]denied/i.test(((e && e.code) || '') + ((e && e.message) || ''));
+
+const planEnv = (extra) => ({ now: firebase.database.ServerValue.TIMESTAMP, rng: Math.random, ...extra });
+
+/** Creates a room under a fresh random code. The rules only allow creating a room that does not exist, so a collision is retried. */
+export async function createRoom(uid, name, settings) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const code = generateRoomCode(Math.random);
+    const room = createRoomData(uid, name, settings, planEnv());
+    try {
+      await db.ref(`rooms/${code}`).set(room);
+      return code;
+    } catch (e) {
+      if (!isDenied(e)) throw e;
+    }
+  }
+  throw new Error('Could not find a free room code – please try again.');
 }
 
-export async function action(name, payload = {}) {
-  const res = await callable({ action: name, ...payload });
-  return res.data;
+/** Joins (or re-joins) a room. Rules refuse unknown rooms and rooms that already started. */
+export async function joinRoom(uid, code, name) {
+  let exists = false;
+  try { exists = !!(await db.ref(`rooms/${code}/players/${uid}`).once('value')).val(); } catch (_) { /* not a member yet */ }
+  const { updates } = planners.joinRoom(null, uid, { name, exists }, planEnv());
+  try { await db.ref().update(subst(code, updates)); }
+  catch (e) { if (isDenied(e)) throw new Error('Room not found, or the game has already started.'); throw e; }
 }
-export const createRoom = (name, settings) => action('createRoom', { name, settings });
+
+const subst = (code, updates) => Object.fromEntries(Object.entries(updates).map(([k, v]) => [k.replace('{code}', code), v]));
+
+/** Plans an action from the current room view, then submits it as one atomic multi-path update (the rules re-validate it). */
+export async function action(name, room, uid, code, payload = {}, extraEnv) {
+  const { updates } = planners[name](room, uid, payload, planEnv(extraEnv));
+  if (!Object.keys(updates).length) return;
+  await db.ref().update(subst(code, updates));
+}
 
 export const roomRef = (code, path = '') => db.ref(`rooms/${normalizeRoomCode(code)}${path ? '/' + path : ''}`);
 
@@ -60,6 +89,5 @@ export function trackPresence(code, uid) {
   return () => { connected.off('value', cb); me.set(false).catch(() => {}); };
 }
 export const presenceRef = (code) => db.ref(`presence/${code}`);
-export const liveRef = (code) => db.ref(`live/${code}/pos`);
-export const secretRef = (code, uid) => db.ref(`rooms/${code}/secret/${uid}`);
+export const liveRef = (code) => db.ref(`live/${code}`);
 export const connectionRef = () => db.ref('.info/connected');
