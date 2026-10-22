@@ -2,11 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const S = require('../shared/game-logic.js');
 
-test('room creation waits for auth, writes one room path, and logs Firebase failures', async (t) => {
+test('room creation waits for auth, uses individual room paths, and logs Firebase failures', async (t) => {
   const previousFirebase = globalThis.firebase;
   const previousWindow = globalThis.window;
   const previousConsoleError = console.error;
   const writes = [];
+  const reads = [];
+  const updates = [];
   const logs = [];
   let authReady = false;
   let currentUser = null;
@@ -34,10 +36,18 @@ test('room creation waits for auth, writes one room path, and logs Firebase fail
   const database = () => ({
     ref(path) {
       return {
+        path,
         async set(value) {
           assert.equal(authReady, true);
           writes.push({ path, value });
           if (writeError) throw writeError;
+        },
+        async once() {
+          reads.push(path);
+          return { val: () => null };
+        },
+        async update(value) {
+          updates.push(value);
         },
       };
     },
@@ -75,6 +85,17 @@ test('room creation waits for auth, writes one room path, and logs Firebase fail
   assert.equal(logs[0][1].path, writes[1].path);
   assert.equal(logs[0][1].code, writeError.code);
   assert.equal(logs[0][1].message, writeError.message);
+
+  writeError = { code: 'NETWORK_ERROR', message: 'connection failed' };
+  await assert.rejects(api.createRoom('host', 'Host', {}), (e) => e === writeError);
+  assert.equal(logs[1][1].code, writeError.code);
+  assert.equal(logs[1][1].message, writeError.message);
+
+  writeError = null;
+  await api.joinRoom('host', 'ABCD2', 'Host');
+  assert.deepEqual(reads, ['wavelengthRooms/ABCD2/players/host']);
+  assert.deepEqual(Object.keys(updates[0]), ['wavelengthRooms/ABCD2/players/host']);
+  assert.equal(api.roomRef('ABCD2', 'meta').path, 'wavelengthRooms/ABCD2/meta');
 
   const writesBeforeMismatch = writes.length;
   await assert.rejects(api.createRoom('different-user', 'Host', {}), { code: 'auth/user-mismatch' });
