@@ -10,7 +10,7 @@ const toastEl = document.getElementById('toast');
 const LS_NAME = 'wl.name', LS_ROOM = 'wl.room';
 
 const S = {
-  uid: null, code: null, meta: null, players: null, teams: null, rawGame: null, game: null, used: null, presence: {}, live: null, secret: null, lock: null,
+  uid: null, code: null, meta: null, players: null, teams: null, rawGame: null, game: null, used: null, presence: {}, live: null, secret: null, lock: null, locks: null,
   needsJoin: false, closed: null, offline: false, busy: false, hadMembership: false,
 };
 let unsubs = [];
@@ -34,7 +34,9 @@ const roster = (team) => teamMembers({ teams: S.teams }, team)
 const isHost = () => S.meta && S.meta.hostUid === S.uid;
 const online = (uid) => S.presence && S.presence[uid] === true;
 const myTeam = () => teamOf({ teams: S.teams }, S.uid);
-const roomView = () => ({ meta: S.meta, players: S.players, teams: S.teams || {}, game: S.rawGame, used: arr(S.used), secret: S.secret, lock: S.lock });
+const roomView = () => ({ meta: S.meta, players: S.players, teams: S.teams || {}, game: S.rawGame, used: arr(S.used), secret: S.secret, lock: S.lock, locks: S.locks });
+const coop = () => !!(S.meta && S.meta.settings.gameMode === 'coop');
+const playerList = () => Object.entries(S.players || {}).map(([uid, p]) => ({ uid, ...p }));
 const inviteLink = () => `${location.origin}${location.pathname}?room=${S.code}`;
 
 /** Runs a server action once at a time (guards against double clicks). */
@@ -55,7 +57,7 @@ function stopListeners() { unsubs.forEach((u) => { try { u(); } catch (_) { /* i
 
 function startRoom(code) {
   stopListeners();
-  Object.assign(S, { code, meta: null, players: null, teams: null, rawGame: null, game: null, used: null, presence: {}, live: null, secret: null, lock: null, needsJoin: false, closed: null, hadMembership: false });
+  Object.assign(S, { code, meta: null, players: null, teams: null, rawGame: null, game: null, used: null, presence: {}, live: null, secret: null, lock: null, locks: null, needsJoin: false, closed: null, hadMembership: false });
   secretSig = null;
   viewKey = null;
   history.replaceState(null, '', `${location.pathname}?room=${code}`);
@@ -80,6 +82,7 @@ function startRoom(code) {
   sub(api.roomRef(code, 'teams'), 'teams');
   sub(api.roomRef(code, 'used'), 'used');
   sub(api.roomRef(code, 'lock'), 'lock');
+  sub(api.roomRef(code, 'locks'), 'locks');
   sub(api.roomRef(code, 'game'), 'rawGame', (v) => watchSecret(v));
   sub(api.presenceRef(code), 'presence', (v) => { S.presence = v || {}; });
   sub(api.liveRef(code), 'live');
@@ -218,8 +221,9 @@ function howToPlay() {
       h('li', {}, 'One or more teams of exactly two players take turns.'),
       h('li', {}, 'The Psychic sees a hidden target on the dial and says a clue (out loud) that fits the spectrum.'),
       h('li', {}, 'Their teammate, the Guesser, moves the needle to where they think the target is, then locks it in.'),
-      h('li', {}, 'Bullseye = 2 points, next to it = 1 point. Roles swap each time a team plays.'),
-      h('li', {}, 'First team to the target score wins. Other teams can see the target while they spectate.')));
+      h('li', {}, 'Within 1 = 3 points, within 5 = 2 points, within 15 = 1 point. Roles swap each time a team plays.'),
+      h('li', {}, 'First team to the target score wins. Other teams can see the target while they spectate.'),
+      h('li', {}, 'Co-op mode: everyone is one team, players take turns as Psychic, everyone else guesses and their points are added up. If nobody scores, the Psychic costs the team 1 point.')));
 }
 
 /* ---------- shared pieces ---------- */
@@ -242,6 +246,11 @@ function playerLine(p, extra) {
 
 function scoreboard() {
   const g = S.game, n = S.meta.settings.teamCount;
+  if (coop()) {
+    return h('div', { class: 'scoreboard', role: 'list' }, h('div', { class: 'score active', role: 'listitem', style: { '--team': teamColor(0) } },
+      h('span', { class: 'sname' }, 'Team score'), h('span', { class: 'sval' }, `${arr(g.scores)[0] || 0} / ${S.meta.settings.targetScore}`),
+      h('span', { class: 'smembers' }, playerList().map((p) => (p.uid === g.psychicUid ? '🔮 ' : '') + p.name).join(' · '))));
+  }
   return h('div', { class: 'scoreboard', role: 'list' }, Array.from({ length: n }, (_, t) => h('div', {
     class: `score ${g.activeTeam === t && g.state !== STATES.LOBBY ? 'active' : ''}`, role: 'listitem', style: { '--team': teamColor(t) },
   }, h('span', { class: 'sname' }, teamName(t)), h('span', { class: 'sval' }, arr(g.scores)[t] || 0),
@@ -271,6 +280,13 @@ function lobbyView() {
     const m = S.meta, s = m.settings, host = isHost();
     replace(root.querySelector('.offline-slot'), S.offline && offlineBanner());
     replace(noticeEl, m.notice && h('div', { class: 'banner info', role: 'status' }, m.notice));
+    if (coop()) {
+      replace(rosterEl, h('section', { class: 'card team', style: { '--team': teamColor(0) } },
+        h('h3', {}, 'Everyone', h('span', { class: 'count' }, `${playerList().length}`)),
+        h('ul', {}, playerList().map((p) => playerLine(p, host && p.uid !== S.uid && h('span', { class: 'row-actions' },
+          h('button', { class: `btn tiny ${online(p.uid) ? '' : 'danger'}`, onclick: () => act('removePlayer', { targetUid: p.uid }) }, 'Remove')))))));
+      replace(unassignedEl);
+    } else {
     replace(rosterEl, Array.from({ length: s.teamCount }, (_, t) => {
       const members = roster(t);
       const full = members.length >= LIMITS.PLAYERS_PER_TEAM;
@@ -290,11 +306,12 @@ function lobbyView() {
         onchange: (e) => { if (e.target.value !== '') act('setTeam', { team: Number(e.target.value), targetUid: p.uid }); },
       }, h('option', { value: '' }, 'Assign…'), Array.from({ length: s.teamCount }, (_, t) => h('option', { value: t }, teamName(t)))),
       p.uid !== S.uid && h('button', { class: `btn tiny ${online(p.uid) ? '' : 'danger'}`, onclick: () => act('removePlayer', { targetUid: p.uid }) }, 'Remove'))))) : h('p', { class: 'muted' }, 'Everyone is on a team.'));
+    }
 
-    const ready = lobbyReadiness({ meta: m, teams: S.teams || {} });
+    const ready = lobbyReadiness({ meta: m, teams: S.teams || {}, players: S.players });
     const hostOffline = !host && !online(m.hostUid) && Object.keys(S.presence).length > 0;
     replace(statusEl, h('h2', {}, host ? 'Ready to start?' : 'Waiting for the host'),
-      ready.ready ? h('p', { class: 'ok' }, 'All teams are full.') : h('ul', { class: 'problems' }, ready.problems.map((p) => h('li', {}, p))),
+      ready.ready ? h('p', { class: 'ok' }, coop() ? 'Everyone is ready.' : 'All teams are full.') : h('ul', { class: 'problems' }, ready.problems.map((p) => h('li', {}, p))),
       host ? h('button', { class: 'btn primary big', disabled: !ready.ready, onclick: () => act('startGame') }, 'Start game') : null,
       hostOffline ? h('div', {}, h('p', { class: 'muted' }, 'The host appears to be disconnected.'), h('button', { class: 'btn small', onclick: () => act('claimHost', {}, { hostOnline: online(m.hostUid) }) }, 'Take over as host')) : null);
 
@@ -303,7 +320,7 @@ function lobbyView() {
       if (sig !== formSig && !form.isDirty()) { form.setValues(s); formSig = sig; }
     } else {
       replace(summaryEl, h('ul', { class: 'summary' },
-        h('li', {}, `Teams: ${s.teamCount}`), h('li', {}, `Target score: ${s.targetScore}`),
+        h('li', {}, s.gameMode === 'coop' ? 'Mode: co-op (one team)' : `Teams: ${s.teamCount}`), h('li', {}, `Target score: ${s.targetScore}`),
         h('li', {}, `Prompts: ${{ builtin: 'built-in', custom: 'custom only', mixed: 'built-in + custom' }[s.promptMode]}`),
         arr(s.customPrompts).length ? h('li', {}, `${arr(s.customPrompts).length} custom prompts`) : null));
     }
@@ -316,6 +333,7 @@ function gameView() {
   let lastState = null;
   let lastSent = 0, pending = null, timer = null;
   const pushLive = (pos) => {
+    if (coop()) return; // every guesser has a private needle in co-op
     pending = pos;
     const wait = Math.max(0, 60 - (Date.now() - lastSent));
     clearTimeout(timer);
@@ -341,17 +359,23 @@ function gameView() {
     replace(root.querySelector('.offline-slot'), S.offline && offlineBanner());
     replace(scoreEl, scoreboard());
     const active = g.activeTeam;
-    const isPsychic = g.psychicUid === uid, isGuesser = g.guesserUid === uid;
+    const cp = coop();
+    const isPsychic = g.psychicUid === uid, isGuesser = cp ? !isPsychic : g.guesserUid === uid;
+    const myLocks = S.locks || {};
+    const guessers = cp ? playerList().filter((p) => p.uid !== g.psychicUid) : [];
+    const lockedCount = guessers.filter((p) => myLocks[p.uid] && myLocks[p.uid].turn === g.turn).length;
+    const allLocked = cp && guessers.length > 0 && lockedCount === guessers.length;
     const nm = (u) => (S.players[u] ? S.players[u].name : 'Someone');
     dial.setAccent(teamColor(active));
     replace(promptEl, h('span', {}, g.prompt.low), h('span', {}, g.prompt.high));
 
     const secretTarget = S.secret && S.secret.turn === g.turn ? S.secret.target : null;
-    const lock = S.lock && S.lock.turn === g.turn ? S.lock : null;
+    const lockSrc = cp ? myLocks[uid] : S.lock;
+    const lock = lockSrc && lockSrc.turn === g.turn ? lockSrc : null;
     // Trusted-client steps: the Psychic's browser rolls the target (only they and spectators can read it),
     // and any browser that can see the target publishes the result once the Guesser has locked in.
     if (g.state === STATES.CLUE && isPsychic && secretTarget === null && !wroteTarget) { wroteTarget = true; quietAct('writeTarget'); }
-    if (g.state === STATES.GUESSING && lock && !isGuesser && secretTarget !== null && !triedReveal && !S.busy) {
+    if (g.state === STATES.GUESSING && (cp ? allLocked && isPsychic : lock && !isGuesser) && secretTarget !== null && !triedReveal && !S.busy) {
       triedReveal = true;
       setTimeout(() => quietAct('reveal'), isPsychic ? 100 : 600);
     }
@@ -370,19 +394,20 @@ function gameView() {
     lastState = g.state;
 
     const role = isPsychic ? 'Psychic' : isGuesser ? 'Guesser' : 'Spectator';
+    const guessersLabel = cp ? `${lockedCount}/${guessers.length} locked in` : '';
     let info;
     if (g.state === STATES.CLUE) {
       info = isPsychic ? 'You are the Psychic. Say a clue out loud that fits where the target sits on this spectrum, then continue.'
         : isGuesser ? `You are the Guesser. Wait for ${nm(g.psychicUid)}'s clue — the target is hidden from you.`
           : `Spectating. You can see the target; ${nm(g.psychicUid)} is thinking of a clue.`;
     } else if (g.state === STATES.GUESSING) {
-      info = isPsychic ? 'Your teammate is placing the needle. Don\'t give any more hints!'
-        : isGuesser ? (lock ? 'Guess locked in – revealing…' : 'Drag the needle (or use arrow keys) to where you think the target is, then lock it in.')
+      info = isPsychic ? (cp ? 'Everyone is placing their needle.' : 'Your teammate is placing the needle. Don\'t give any more hints!')
+        : isGuesser ? (lock ? (cp ? 'Guess locked in – waiting for the others…' : 'Guess locked in – revealing…') : 'Drag the needle (or use arrow keys) to where you think the target is, then lock it in.')
           : `Spectating — watch ${nm(g.guesserUid)} move the needle live.`;
     } else info = 'Result';
     replace(statusEl,
       h('div', { class: 'turn', style: { '--team': teamColor(active) } },
-        h('strong', {}, `${teamName(active)}'s turn`), h('span', {}, `🔮 ${nm(g.psychicUid)} · 🎯 ${nm(g.guesserUid)}`)),
+        h('strong', {}, cp ? `${nm(g.psychicUid)} is the Psychic` : `${teamName(active)}'s turn`), h('span', {}, cp ? guessersLabel : `🔮 ${nm(g.psychicUid)} · 🎯 ${nm(g.guesserUid)}`)),
       h('span', { class: `role role-${role.toLowerCase()}` }, `You: ${role}`),
       g.state !== STATES.REVEAL && h('p', {}, info));
 
@@ -392,16 +417,16 @@ function gameView() {
       class: 'btn primary big',
       onclick: () => act('lockGuess', { guess: dial.getGuess() }),
     }, 'Lock in guess'));
-    if (g.state === STATES.GUESSING && lock && !isGuesser) btns.push(h('button', { class: 'btn primary big', onclick: () => act('reveal') }, 'Reveal result'));
+    if (g.state === STATES.GUESSING && !cp && lock && !isGuesser) btns.push(h('button', { class: 'btn primary big', onclick: () => act('reveal') }, 'Reveal result'));
     replace(controls, btns);
 
     if (result) {
-      const canAdvance = isHost() || myTeam() === active;
+      const canAdvance = isHost() || (cp ? isPsychic : myTeam() === active);
       const won = g.winnerTeam != null;
       replace(resultEl, h('section', { class: `card result pts-${result.points}`, 'aria-live': 'polite' },
-        h('h2', {}, result.points === 2 ? 'Bullseye! +2' : result.points === 1 ? 'Close! +1' : 'Miss — 0 points'),
-        h('p', {}, `Target ${result.target} · Guess ${result.guess} · ${teamName(active)} now has ${arr(g.scores)[active]} point${arr(g.scores)[active] === 1 ? '' : 's'}.`),
-        won && h('p', { class: 'ok' }, `${teamName(g.winnerTeam)} reached ${S.meta.settings.targetScore} points!`),
+        h('h2', {}, cp ? (result.points > 0 ? `+${result.points} for the team!` : 'Nobody scored — the Psychic loses a point') : result.points === 3 ? 'Bullseye! +3' : result.points === 2 ? 'Close! +2' : result.points === 1 ? 'Near! +1' : 'Miss — 0 points'),
+        h('p', {}, `Target ${result.target} · ${cp ? 'Best guess' : 'Guess'} ${result.guess} · ${cp ? 'The team' : teamName(active)} now has ${arr(g.scores)[active]} point${arr(g.scores)[active] === 1 ? '' : 's'}.`),
+        won && h('p', { class: 'ok' }, `${cp ? 'The team' : teamName(g.winnerTeam)} reached ${S.meta.settings.targetScore} points!`),
         canAdvance ? h('button', { class: 'btn primary big', onclick: () => act('nextTurn') }, won ? 'See final results' : 'Next turn')
           : h('p', { class: 'muted' }, 'Waiting for the host or the active team to continue…')));
     } else replace(resultEl);
@@ -415,6 +440,16 @@ function finishedView() {
   return function update() {
     const g = S.game, n = S.meta.settings.teamCount;
     const w = g.winnerTeam == null ? 0 : g.winnerTeam;
+    if (coop()) {
+      replace(el, h('section', { class: 'card center winner', style: { '--team': teamColor(0) } },
+        h('div', { class: 'trophy', 'aria-hidden': 'true' }, '🏆'),
+        h('h1', {}, 'You did it together!'),
+        h('p', {}, `Final score: ${arr(g.scores)[0] || 0} (target ${S.meta.settings.targetScore}) in ${(g.teamTurns && g.teamTurns.t0) || g.turn} rounds`),
+        isHost() ? h('button', { class: 'btn primary big', onclick: () => act('playAgain') }, 'Play again')
+          : h('p', { class: 'muted' }, 'Waiting for the host to start a new game…'),
+        h('a', { class: 'btn ghost', href: '../' }, 'Back to homepage')));
+      return;
+    }
     const order = Array.from({ length: n }, (_, t) => t).sort((a, b) => arr(g.scores)[b] - arr(g.scores)[a]);
     replace(el, h('section', { class: 'card center winner', style: { '--team': teamColor(w) } },
       h('div', { class: 'trophy', 'aria-hidden': 'true' }, '🏆'),

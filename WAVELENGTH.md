@@ -63,3 +63,8 @@ The Wavelength client and Sprint Planner intentionally share the existing `sprin
 8. The other team plays next; each team's roles swap on its second turn.
 9. Play to the target score: Game over screen; host "Play again" returns to the lobby with the same teams.
 10. Close one device mid-turn: its dot turns grey, the host can remove it; leaving mid-game returns everyone to the lobby with a notice.
+
+## Scoring and game modes
+
+* **Scoring:** within 1 of the target = 3 points, within 5 = 2, within 15 = 1 (both modes). Constants live in `shared/constants.js`; the rules file mirrors them.
+* **Co-op mode** (`settings.gameMode = 'coop'`): no teams; everyone is on `t0`. The Psychic rotates through players in join order; every other player locks their own guess under `locks/{uid}`. Only the Psychic can read the target and publishes the reveal once everyone has locked in. The team score is the sum of the guessers' points; if nobody scores, the Psychic costs the team 1 point (the shared score can go negative). The rules verify the target and the score arithmetic but cannot re-sum the individual locks.

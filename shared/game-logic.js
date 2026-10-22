@@ -10,7 +10,7 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.WavelengthShared = Object.assign(root.WavelengthShared || {}, api);
 })(typeof self !== 'undefined' ? self : this, function (deps) {
-  const { SCORING, SPECTRUM, LIMITS, ROOM_CODE_ALPHABET, STATES, TRANSITIONS, PROMPT_MODES, BUILTIN_PROMPTS } = deps;
+  const { SCORING, SPECTRUM, LIMITS, ROOM_CODE_ALPHABET, STATES, TRANSITIONS, PROMPT_MODES, GAME_MODES, BUILTIN_PROMPTS } = deps;
 
   class GameError extends Error {
     constructor(code, message) {
@@ -35,6 +35,7 @@
 
   function scoreGuess(target, guess) {
     const d = Math.abs(guess - target);
+    if (d <= SCORING.BULLSEYE_RADIUS) return SCORING.BULLSEYE_POINTS;
     if (d <= SCORING.CENTER_RADIUS) return SCORING.CENTER_POINTS;
     if (d <= SCORING.SIDE_RADIUS) return SCORING.SIDE_POINTS;
     return 0;
@@ -42,15 +43,17 @@
 
   /** Scoring bands aligned on the target and clipped to the dial. Ordered left to right. */
   function scoringBands(target) {
-    const c = SCORING.CENTER_RADIUS, s = SCORING.SIDE_RADIUS;
+    const b = SCORING.BULLSEYE_RADIUS, c = SCORING.CENTER_RADIUS, s = SCORING.SIDE_RADIUS;
     const raw = [
       { from: target - s, to: target - c, points: SCORING.SIDE_POINTS },
-      { from: target - c, to: target + c, points: SCORING.CENTER_POINTS },
+      { from: target - c, to: target - b, points: SCORING.CENTER_POINTS },
+      { from: target - b, to: target + b, points: SCORING.BULLSEYE_POINTS },
+      { from: target + b, to: target + c, points: SCORING.CENTER_POINTS },
       { from: target + c, to: target + s, points: SCORING.SIDE_POINTS },
     ];
     return raw
-      .map((b) => ({ ...b, from: clamp(b.from, SPECTRUM.MIN, SPECTRUM.MAX), to: clamp(b.to, SPECTRUM.MIN, SPECTRUM.MAX) }))
-      .filter((b) => b.to > b.from);
+      .map((x) => ({ ...x, from: clamp(x.from, SPECTRUM.MIN, SPECTRUM.MAX), to: clamp(x.to, SPECTRUM.MIN, SPECTRUM.MAX) }))
+      .filter((x) => x.to > x.from);
   }
 
   /* ---------- Prompts ---------- */
@@ -119,7 +122,20 @@
     return null;
   }
 
+  const isCoop = (room) => !!(room && room.meta && room.meta.settings && room.meta.settings.gameMode === 'coop');
+  /** Co-op rotation order: join order (uid as tie-break), so every device agrees on who is next. */
+  function coopOrder(room) {
+    return Object.entries(room.players || {})
+      .sort((a, b) => (a[1].joinedAt - b[1].joinedAt) || (a[0] < b[0] ? -1 : 1))
+      .map(([u]) => u);
+  }
+
   function lobbyReadiness(room) {
+    if (isCoop(room)) {
+      const c = Object.keys(room.players || {}).length;
+      const problems = c >= LIMITS.MIN_COOP_PLAYERS ? [] : [`Co-op needs at least ${LIMITS.MIN_COOP_PLAYERS} players (${c} so far).`];
+      return { ready: problems.length === 0, problems };
+    }
     const n = room.meta.settings.teamCount;
     const problems = [];
     for (let t = 0; t < n; t++) {
@@ -167,19 +183,22 @@
     const teamCount = Number(pick('teamCount', LIMITS.DEFAULT_TEAMS));
     const targetScore = Number(pick('targetScore', LIMITS.DEFAULT_TARGET_SCORE));
     const promptMode = pick('promptMode', 'builtin');
+    const gameMode = pick('gameMode', 'versus');
+    if (!GAME_MODES.includes(gameMode)) throw new GameError('invalid-argument', 'Unknown game mode.');
     if (!Number.isInteger(teamCount) || teamCount < LIMITS.MIN_TEAMS || teamCount > LIMITS.MAX_TEAMS)
       throw new GameError('invalid-argument', `Teams must be between ${LIMITS.MIN_TEAMS} and ${LIMITS.MAX_TEAMS}.`);
     if (!Number.isInteger(targetScore) || targetScore < LIMITS.MIN_TARGET_SCORE || targetScore > LIMITS.MAX_TARGET_SCORE)
       throw new GameError('invalid-argument', `Target score must be between ${LIMITS.MIN_TARGET_SCORE} and ${LIMITS.MAX_TARGET_SCORE}.`);
     if (!PROMPT_MODES.includes(promptMode)) throw new GameError('invalid-argument', 'Unknown prompt mode.');
+    const coop = gameMode === 'coop';
     const rawNames = arr(pick('teamNames', []));
-    const teamNames = Array.from({ length: teamCount }, (_, t) => cleanText(rawNames[t], LIMITS.MAX_TEAM_NAME_LENGTH) || `Team ${t + 1}`);
+    const teamNames = Array.from({ length: coop ? 1 : teamCount }, (_, t) => cleanText(rawNames[t], LIMITS.MAX_TEAM_NAME_LENGTH) || `Team ${t + 1}`);
     const customPromptsText = String(pick('customPromptsText', '')).slice(0, 20000);
     const { prompts, errors } = parsePrompts(customPromptsText);
     if (errors.length) throw new GameError('invalid-argument', `Custom prompts: ${errors[0].message}${errors[0].line ? ` (line ${errors[0].line})` : ''}`);
     if ((promptMode === 'custom' || promptMode === 'mixed') && prompts.length === 0)
       throw new GameError('invalid-argument', 'Add at least one valid custom prompt or switch to built-in prompts.');
-    const out = { teamCount, targetScore, promptMode, teamNames };
+    const out = { teamCount: coop ? 1 : teamCount, targetScore, promptMode, teamNames, gameMode };
     if (prompts.length) { out.customPrompts = prompts; out.customPromptsText = customPromptsText; }
     return out;
   }
@@ -192,6 +211,11 @@
    */
   const R = (p) => `wavelengthRooms/{code}/${p}`;
   const emptyScores = () => ({ t0: 0, t1: 0, t2: 0, t3: 0 });
+  const activeLocks = (room, turn) => {
+    const out = {};
+    Object.entries(room.locks || {}).forEach(([u, l]) => { if (l && l.turn === turn) out[u] = l; });
+    return out;
+  };
 
   function emptyGame() {
     return { state: STATES.LOBBY, turn: 0, activeKey: 't0', scores: emptyScores(), teamTurns: emptyScores() };
@@ -234,6 +258,7 @@
     if (target !== actor) requireHost(room, actor);
     requireMember(room, target);
     requireState(room, STATES.LOBBY, 'Teams are locked once the game starts.');
+    if (isCoop(room)) throw new GameError('invalid-state', 'Everyone is on one team in co-op mode.');
     const updates = {};
     const cur = teamOf(room, target);
     if (team === null || team === undefined) {
@@ -257,7 +282,7 @@
     requireState(room, STATES.LOBBY, 'Settings can only be changed in the lobby.');
     const settings = sanitizeSettings(input, room.meta.settings);
     const updates = { [R('meta/settings')]: settings, ...stamp(env) };
-    for (let t = settings.teamCount; t < MAX_KEYS; t++) {
+    for (let t = isCoop({ meta: { settings } }) ? 0 : settings.teamCount; t < MAX_KEYS; t++) {
       const [a, b] = teamSlots(room, t);
       if (a) updates[R(`teams/${teamKey(t)}/a`)] = null;
       if (b) updates[R(`teams/${teamKey(t)}/b`)] = null;
@@ -285,6 +310,25 @@
     return { game, used };
   }
 
+  /** Co-op: everyone is on team t0; the Psychic rotates through the players and everyone else guesses. */
+  function beginCoopTurn(room, usedIn, env) {
+    const old = room.game;
+    const order = coopOrder(room);
+    if (order.length < LIMITS.MIN_COOP_PLAYERS) throw new GameError('invalid-state', 'Not enough players.');
+    const turns = ((old.teamTurns || {}).t0 || 0) + 1;
+    const { prompt, used } = drawPrompt(promptPool(room.meta.settings), usedIn, env.rng);
+    const game = {
+      state: STATES.CLUE,
+      turn: old.turn + 1,
+      activeKey: 't0',
+      scores: { ...emptyScores(), ...(old.scores || {}) },
+      teamTurns: { ...emptyScores(), ...(old.teamTurns || {}), t0: turns },
+      psychicUid: order[(turns - 1) % order.length],
+      prompt,
+    };
+    return { game, used };
+  }
+
   function startGame(room, actor, _p, env) {
     requireMember(room, actor);
     requireHost(room, actor);
@@ -292,10 +336,10 @@
     const { ready, problems } = lobbyReadiness(room);
     if (!ready) throw new GameError('lobby-not-ready', problems.join(' '));
     const fresh = { ...room, game: emptyGame() };
-    const { game, used } = beginTurn(fresh, 0, [], env);
+    const { game, used } = isCoop(room) ? beginCoopTurn(fresh, [], env) : beginTurn(fresh, 0, [], env);
     return {
       updates: {
-        [R('game')]: game, [R('used')]: used, [R('secret')]: null, [R('lock')]: null, 'live/{code}': null,
+        [R('game')]: game, [R('used')]: used, [R('secret')]: null, [R('lock')]: null, [R('locks')]: null, 'live/{code}': null,
         [R('meta/notice')]: null, ...stamp(env),
       },
     };
@@ -324,17 +368,43 @@
     requireMember(room, actor);
     const g = room.game;
     requireState(room, STATES.GUESSING, 'No guess is expected right now.');
-    if (g.guesserUid !== actor) throw new GameError('permission-denied', 'Only the active Guesser can submit.');
-    if (room.lock && room.lock.turn === g.turn) throw new GameError('invalid-state', 'The guess is already locked.');
+    if (isCoop(room)) {
+      if (g.psychicUid === actor) throw new GameError('permission-denied', 'The Psychic does not guess.');
+      if (activeLocks(room, g.turn)[actor]) throw new GameError('invalid-state', 'Your guess is already locked.');
+    } else if (g.guesserUid !== actor) throw new GameError('permission-denied', 'Only the active Guesser can submit.');
+    if (!isCoop(room) && room.lock && room.lock.turn === g.turn) throw new GameError('invalid-state', 'The guess is already locked.');
     const gv = Number(guess);
     if (typeof guess === 'boolean' || guess === null || guess === '' || !Number.isFinite(gv) || gv < SPECTRUM.MIN || gv > SPECTRUM.MAX)
       throw new GameError('invalid-argument', 'Guess must be a number from 0 to 100.');
-    return { updates: { [R('lock')]: { turn: g.turn, guess: Math.round(gv * 10) / 10 }, ...stamp(env) } };
+    const lock = { turn: g.turn, guess: Math.round(gv * 10) / 10 };
+    return { updates: { [R(isCoop(room) ? `locks/${actor}` : 'lock')]: lock, ...stamp(env) } };
   }
 
   /** Step 2: any other player who can see the target publishes the result; the rules recompute and verify it. */
+  /** Co-op: the Psychic (the only one who can read the target) publishes once every guesser has locked in. */
+  function revealCoop(room, actor, env) {
+    const g = room.game;
+    requireState(room, STATES.GUESSING, 'The guesses are not locked yet.');
+    if (g.psychicUid !== actor) throw new GameError('permission-denied', 'Only the Psychic can reveal.');
+    if (!room.secret || room.secret.turn !== g.turn) throw new GameError('invalid-state', 'The target is missing.');
+    const locks = activeLocks(room, g.turn);
+    const guessers = Object.keys(room.players).filter((u) => u !== g.psychicUid);
+    if (guessers.some((u) => !locks[u])) throw new GameError('invalid-state', 'Waiting for everyone to lock in a guess.');
+    const target = room.secret.target;
+    const total = guessers.reduce((n, u) => n + scoreGuess(target, locks[u].guess), 0);
+    const points = total > 0 ? total : -LIMITS.COOP_PENALTY;
+    let best = locks[guessers[0]].guess;
+    guessers.forEach((u) => { if (Math.abs(locks[u].guess - target) < Math.abs(best - target)) best = locks[u].guess; });
+    const scores = { ...emptyScores(), ...(g.scores || {}) };
+    scores.t0 += points;
+    const game = { ...g, state: STATES.REVEAL, scores, result: { guess: best, target, diff: Math.abs(best - target), points } };
+    if (scores.t0 >= room.meta.settings.targetScore) game.winnerKey = 't0';
+    return { updates: { [R('game')]: game, ...stamp(env) } };
+  }
+
   function reveal(room, actor, _p, env) {
     requireMember(room, actor);
+    if (isCoop(room)) return revealCoop(room, actor, env);
     const g = room.game;
     requireState(room, STATES.GUESSING, 'The guess is not locked yet.');
     if (g.guesserUid === actor) throw new GameError('permission-denied', 'The Guesser cannot reveal the target.');
@@ -354,12 +424,16 @@
     requireMember(room, actor);
     const g = room.game;
     requireState(room, STATES.REVEAL, 'The turn is not finished yet.');
-    if (room.meta.hostUid !== actor && actor !== g.psychicUid && actor !== g.guesserUid)
+    if (room.meta.hostUid !== actor && actor !== g.psychicUid && (isCoop(room) || actor !== g.guesserUid))
       throw new GameError('permission-denied', 'Only the host or the active team can advance.');
     if (g.winnerKey) {
       const game = { ...g };
       transition(game, STATES.FINISHED);
       return { updates: { [R('game')]: game, ...stamp(env) } };
+    }
+    if (isCoop(room)) {
+      const t = beginCoopTurn(room, room.used, env);
+      return { updates: { [R('game')]: t.game, [R('used')]: t.used, ...stamp(env) } };
     }
     const next = (Number(g.activeKey.slice(1)) + 1) % room.meta.settings.teamCount;
     const { game, used } = beginTurn(room, next, room.used, env);
@@ -370,7 +444,7 @@
     requireMember(room, actor);
     requireHost(room, actor);
     requireState(room, STATES.FINISHED, 'The game is not over.');
-    return { updates: { [R('game')]: emptyGame(), [R('used')]: null, [R('secret')]: null, [R('lock')]: null, 'live/{code}': null, ...stamp(env) } };
+    return { updates: { [R('game')]: emptyGame(), [R('used')]: null, [R('secret')]: null, [R('lock')]: null, [R('locks')]: null, 'live/{code}': null, ...stamp(env) } };
   }
 
   /** Leave (target === actor) or host removal. Deletes the room when the last player leaves. */
@@ -393,7 +467,7 @@
     if (room.game.state !== STATES.LOBBY) {
       updates[R('game')] = emptyGame();
       updates[R('meta/notice')] = `${room.players[target].name} left, so the game returned to the lobby.`;
-      if (room.meta.hostUid === actor) { updates[R('secret')] = null; updates[R('lock')] = null; updates[R('used')] = null; updates['live/{code}'] = null; }
+      if (room.meta.hostUid === actor) { updates[R('secret')] = null; updates[R('lock')] = null; updates[R('locks')] = null; updates[R('used')] = null; updates['live/{code}'] = null; }
     }
     return { updates };
   }
@@ -411,6 +485,6 @@
   return {
     GameError, arr, cleanText, scoreGuess, scoringBands, parsePrompts, promptPool, drawPrompt,
     generateRoomCode, normalizeRoomCode, isValidRoomCode, teamKey, teamSlots, teamMembers, teamOf, lobbyReadiness,
-    canTransition, transition, determineWinner, decorateGame, sanitizeSettings, createRoom, emptyGame, planners,
+    isCoop, coopOrder, activeLocks, canTransition, transition, determineWinner, decorateGame, sanitizeSettings, createRoom, emptyGame, planners,
   };
 });

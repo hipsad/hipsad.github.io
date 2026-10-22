@@ -10,7 +10,10 @@ const ok = (r) => assert.equal(r.ok, true, r.reason);
 const denied = (r) => assert.equal(r.ok, false);
 
 test('scoring boundaries', () => {
-  assert.equal(S.scoreGuess(50, 50), 2);
+  assert.equal(S.scoreGuess(50, 50), 3);
+  assert.equal(S.scoreGuess(50, 51), 3);
+  assert.equal(S.scoreGuess(50, 49), 3);
+  assert.equal(S.scoreGuess(50, 51.1), 2);
   assert.equal(S.scoreGuess(50, 55), 2);
   assert.equal(S.scoreGuess(50, 45), 2);
   assert.equal(S.scoreGuess(50, 55.1), 1);
@@ -22,9 +25,10 @@ test('scoring boundaries', () => {
 
 test('scoring bands are aligned and clipped', () => {
   assert.deepEqual(S.scoringBands(50), [
-    { from: 35, to: 45, points: 1 }, { from: 45, to: 55, points: 2 }, { from: 55, to: 65, points: 1 }]);
-  assert.deepEqual(S.scoringBands(2), [{ from: 0, to: 7, points: 2 }, { from: 7, to: 17, points: 1 }]);
-  assert.deepEqual(S.scoringBands(100), [{ from: 85, to: 95, points: 1 }, { from: 95, to: 100, points: 2 }]);
+    { from: 35, to: 45, points: 1 }, { from: 45, to: 49, points: 2 }, { from: 49, to: 51, points: 3 },
+    { from: 51, to: 55, points: 2 }, { from: 55, to: 65, points: 1 }]);
+  assert.deepEqual(S.scoringBands(2), [{ from: 0, to: 1, points: 2 }, { from: 1, to: 3, points: 3 }, { from: 3, to: 7, points: 2 }, { from: 7, to: 17, points: 1 }]);
+  assert.deepEqual(S.scoringBands(100), [{ from: 85, to: 95, points: 1 }, { from: 95, to: 99, points: 2 }, { from: 99, to: 100, points: 3 }]);
 });
 
 test('prompt parsing', () => {
@@ -199,7 +203,7 @@ test('turn flow: roles, duplicate submissions, invalid transitions, forged resul
   gameErr(() => sim.act('p1', 'reveal'), 'permission-denied'); // guesser cannot reveal
   // forged reveals straight to the database
   const g = sim.game();
-  const forged = (over) => ({ ...g, state: 'reveal', scores: { ...g.scores, t0: 2 }, result: { guess: target, target, diff: 0, points: 2, ...over.result }, ...over.game });
+  const forged = (over) => ({ ...g, state: 'reveal', scores: { ...g.scores, t0: 3 }, result: { guess: target, target, diff: 0, points: 3, ...over.result }, ...over.game });
   denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': forged({}) }));
   denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ result: { points: 1 } }) }));
   denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ game: { scores: { ...g.scores, t0: 9 } } }) }));
@@ -207,21 +211,21 @@ test('turn flow: roles, duplicate submissions, invalid transitions, forged resul
   denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ result: { target: target + 1 } }) }));
   ok(sim.act('p2', 'reveal'));
   gameErr(() => sim.act('p3', 'reveal'), 'invalid-state'); // duplicate reveal
-  assert.equal(sim.game().result.points, 2);
-  assert.equal(sim.game().scores.t0, 2);
+  assert.equal(sim.game().result.points, 3);
+  assert.equal(sim.game().scores.t0, 3);
   gameErr(() => sim.act('p2', 'nextTurn'), 'permission-denied'); // other team cannot advance
   ok(sim.act('p1', 'nextTurn')); // active team may
   const next = sim.game();
   assert.equal(next.activeKey, 't1');
   assert.equal(next.state, STATES.CLUE);
-  assert.equal(next.scores.t0, 2); // scores preserved
+  assert.equal(next.scores.t0, 3); // scores preserved
   assert.equal(next.result, undefined);
   gameErr(() => sim.act('p1', 'nextTurn'), 'invalid-state');
 });
 
-test('points are computed from the real target (miss, side, centre)', () => {
+test('points are computed from the real target (miss, side, centre, bullseye)', () => {
   const pts = [];
-  for (const off of [0, 10, 40]) {
+  for (const off of [0, 1, 4, 10, 40]) {
     const sim = new Sim().lobby4();
     sim.act('p0', 'startGame');
     sim.act('p0', 'writeTarget');
@@ -232,7 +236,7 @@ test('points are computed from the real target (miss, side, centre)', () => {
     sim.act('p2', 'reveal');
     pts.push(sim.game().result.points);
   }
-  assert.deepEqual(pts, [2, 1, 0]);
+  assert.deepEqual(pts, [3, 3, 2, 1, 0]);
 });
 
 test('team rotation and role alternation', () => {
@@ -297,13 +301,13 @@ test('win condition, finish, play again', () => {
 });
 
 test('the higher score must win: a miss never ends the game and ties favour the active team', () => {
-  const sim = new Sim().lobby4({ targetScore: 3 });
+  const sim = new Sim().lobby4({ targetScore: 5 });
   sim.act('p0', 'startGame');
-  assert.equal(sim.playTurn(0).winnerKey, undefined); // 2 < 3
+  assert.equal(sim.playTurn(0).winnerKey, undefined); // 3 < 5
   sim.act('p0', 'nextTurn');
   assert.equal(sim.playTurn(0).winnerKey, undefined);
   sim.act('p2', 'nextTurn');
-  assert.equal(sim.playTurn(0).winnerKey, 't0'); // 4 >= 3
+  assert.equal(sim.playTurn(0).winnerKey, 't0'); // 6 >= 5
 });
 
 /* ---------- leaving, hosting, cleanup ---------- */
@@ -366,9 +370,88 @@ test('rules file stays in sync with the scoring constants and keeps the sprint p
   const { SCORING } = require('../shared/constants.js');
   const rules = require('../database.rules.json').rules;
   const txt = rules.wavelengthRooms.$code.game['.write'];
+  assert.ok(txt.includes(`<=${SCORING.BULLSEYE_RADIUS} ? ${SCORING.BULLSEYE_POINTS}`));
   assert.ok(txt.includes(`<=${SCORING.CENTER_RADIUS} ? ${SCORING.CENTER_POINTS}`));
   assert.ok(txt.includes(`<=${SCORING.SIDE_RADIUS} ? ${SCORING.SIDE_POINTS}`));
   assert.equal(rules.sessions.$sessionId['.read'], true);
   assert.equal(rules.wavelengthRooms.$code['.read'], undefined); // members read child nodes only, so `secret` stays protected
   assert.equal(rules.rooms, undefined);
+});
+
+/* ---------- co-op mode ---------- */
+const targetOf = (sim) => sim.data('wavelengthRooms/ABCDE/secret/target');
+const near = (t, o) => Math.min(100, Math.max(0, t + (t > 50 ? -o : o)));
+
+test('co-op: shared score, everyone guesses, hidden target, Psychic reveals', () => {
+  const sim = new Sim().lobbyCoop(3, { targetScore: 20 });
+  gameErr(() => sim.act('p1', 'setTeam', { team: 0 }), 'invalid-state');
+  sim.act('p0', 'startGame');
+  assert.equal(sim.game().psychicUid, 'p0');
+  gameErr(() => sim.act('p1', 'lockGuess', { guess: 5 }), 'invalid-state'); // still in clue
+  sim.act('p0', 'writeTarget');
+  assert.equal(sim.db.read("p1", "wavelengthRooms/ABCDE/secret").denied, true); // guessers cannot read the target
+  sim.act('p0', 'clueGiven');
+  gameErr(() => sim.act('p0', 'lockGuess', { guess: 5 }), 'permission-denied');
+  gameErr(() => sim.act('p0', 'reveal'), 'invalid-state'); // nobody has locked
+  const t = targetOf(sim);
+  ok(sim.act('p1', 'lockGuess', { guess: near(t, 0) }));
+  gameErr(() => sim.act('p1', 'lockGuess', { guess: 1 }), 'invalid-state');
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/locks/p1': { turn: 1, guess: 1 } }));
+  gameErr(() => sim.act('p0', 'reveal'), 'invalid-state'); // p2 has not locked
+  ok(sim.act('p2', 'lockGuess', { guess: near(t, 4) }));
+  gameErr(() => sim.act('p1', 'reveal'), 'permission-denied');
+  ok(sim.act('p0', 'reveal'));
+  assert.equal(sim.game().result.points, 5); // 3 + 2
+  assert.equal(sim.game().scores.t0, 5);
+  gameErr(() => sim.act('p1', 'nextTurn'), 'permission-denied');
+});
+
+test('co-op: Psychic rotates through all players and loses a point when nobody scores', () => {
+  const sim = new Sim().lobbyCoop(3, { targetScore: 4 });
+  sim.act('p0', 'startGame');
+  const seen = [];
+  const play = (offset) => {
+    seen.push(sim.game().psychicUid);
+    sim.act(sim.game().psychicUid, 'writeTarget');
+    sim.act(sim.game().psychicUid, 'clueGiven');
+    const t = targetOf(sim);
+    ['p0', 'p1', 'p2'].filter((u) => u !== sim.game().psychicUid)
+      .forEach((u) => sim.act(u, 'lockGuess', { guess: near(t, offset) }));
+    return sim.act(sim.game().psychicUid, 'reveal');
+  };
+  ok(play(50)); // everyone misses
+  assert.equal(sim.game().result.points, -1);
+  assert.equal(sim.game().scores.t0, -1);
+  ok(sim.act('p0', 'nextTurn'));
+  ok(play(0)); // 2 guessers x 3
+  assert.equal(sim.game().scores.t0, 5);
+  assert.equal(sim.game().winnerKey, 't0');
+  ok(sim.act('p1', 'nextTurn'));
+  assert.equal(sim.game().state, 'finished');
+  assert.deepEqual(seen, ['p0', 'p1']);
+  ok(sim.act('p0', 'playAgain'));
+});
+
+test('co-op: forged results are rejected and rotation cannot repeat the Psychic', () => {
+  const sim = new Sim().lobbyCoop(3, { targetScore: 50 });
+  sim.act('p0', 'startGame');
+  sim.act('p0', 'writeTarget');
+  sim.act('p0', 'clueGiven');
+  const t = targetOf(sim);
+  const g = sim.game();
+  sim.act('p1', 'lockGuess', { guess: near(t, 40) });
+  sim.act('p2', 'lockGuess', { guess: near(t, 40) });
+  const forged = (o) => ({ ...g, state: 'reveal', scores: { ...g.scores, t0: 5 }, result: { guess: t, target: t, diff: 0, points: 5, ...o } });
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': forged({}) })); // not the Psychic
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ target: t + 1 }) }));
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': { ...forged({}), scores: { ...g.scores, t0: 9 } } }));
+  ok(sim.act('p0', 'reveal'));
+  const next = { ...sim.game(), state: 'clue', turn: 2, teamTurns: { ...sim.game().teamTurns, t0: 2 }, psychicUid: 'p0', prompt: g.prompt };
+  delete next.result;
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': next }));
+});
+
+test('co-op: needs at least two players', () => {
+  const sim = new Sim().lobbyCoop(1);
+  gameErr(() => sim.act('p0', 'startGame'), 'lobby-not-ready');
 });

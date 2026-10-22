@@ -5,7 +5,9 @@
   else root.WavelengthShared = Object.assign(root.WavelengthShared || {}, api);
 })(typeof self !== 'undefined' ? self : this, function () {
   const SCORING = Object.freeze({
-    CENTER_RADIUS: 5, // |guess - target| <= 5  -> CENTER_POINTS
+    BULLSEYE_RADIUS: 1, // |guess - target| <= 1 -> BULLSEYE_POINTS
+    BULLSEYE_POINTS: 3,
+    CENTER_RADIUS: 5, // 1 < |guess - target| <= 5  -> CENTER_POINTS
     SIDE_RADIUS: 15, // 5 < |guess - target| <= 15 -> SIDE_POINTS
     CENTER_POINTS: 2,
     SIDE_POINTS: 1,
@@ -17,6 +19,8 @@
     PLAYERS_PER_TEAM: 2,
     DEFAULT_TEAMS: 2,
     DEFAULT_TARGET_SCORE: 10,
+    MIN_COOP_PLAYERS: 2,
+    COOP_PENALTY: 1, // the Psychic costs the team this many points when nobody scores
     MIN_TARGET_SCORE: 1,
     MAX_TARGET_SCORE: 100,
     MAX_NAME_LENGTH: 20,
@@ -41,7 +45,8 @@
     reveal: ['clue', 'finished', 'lobby'],
     finished: ['lobby'],
   });
+  const GAME_MODES = Object.freeze(['versus', 'coop']);
   const PROMPT_MODES = Object.freeze(['builtin', 'custom', 'mixed']);
   const TEAM_COLORS = Object.freeze(['#ff6b8b', '#4cc9f0', '#ffd166', '#7bd88f']);
-  return { SCORING, SPECTRUM, LIMITS, ROOM_CODE_ALPHABET, STATES, TRANSITIONS, PROMPT_MODES, TEAM_COLORS };
+  return { SCORING, SPECTRUM, LIMITS, ROOM_CODE_ALPHABET, STATES, TRANSITIONS, PROMPT_MODES, GAME_MODES, TEAM_COLORS };
 });
