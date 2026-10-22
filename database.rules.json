@@ -126,6 +126,11 @@
               ".validate": "$k.matches(/^t[0-3]$/) && newData.isNumber() && newData.val()>=-1000 && newData.val()<=1000"
             }
           },
+          "playerScores": {
+            "$uid": {
+              ".validate": "root.child('wavelengthRooms/'+$code+'/players/'+$uid).exists() && newData.isNumber() && newData.val()>=-1000 && newData.val()<=1000 && (newData.val()===data.val() || (!data.exists() && newData.val()===0 && data.parent().parent().child('state').val()==='lobby' && newData.parent().parent().child('state').val()==='clue') || (data.parent().parent().child('state').val()==='guessing' && newData.parent().parent().child('state').val()==='reveal' && newData.val()===(data.exists() ? data.val() : 0)+(($uid===data.parent().parent().child('psychicUid').val()) ? (newData.parent().parent().child('result/points').val()<0 ? -1 : 0) : (root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/turn').val()===data.parent().parent().child('turn').val() ? ((root.child('wavelengthRooms/'+$code+'/secret/target').val()>=root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val() ? root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val()-root.child('wavelengthRooms/'+$code+'/secret/target').val() : root.child('wavelengthRooms/'+$code+'/secret/target').val()-root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val())<=1 ? 3 : ((root.child('wavelengthRooms/'+$code+'/secret/target').val()>=root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val() ? root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val()-root.child('wavelengthRooms/'+$code+'/secret/target').val() : root.child('wavelengthRooms/'+$code+'/secret/target').val()-root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val())<=5 ? 2 : ((root.child('wavelengthRooms/'+$code+'/secret/target').val()>=root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val() ? root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val()-root.child('wavelengthRooms/'+$code+'/secret/target').val() : root.child('wavelengthRooms/'+$code+'/secret/target').val()-root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val())<=15 ? 1 : 0)) : 0))))"
+            }
+          },
           "teamTurns": {
             "$k": {
               ".validate": "$k.matches(/^t[0-3]$/) && newData.isNumber() && newData.val()>=0 && newData.val()<=2000"

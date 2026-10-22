@@ -382,7 +382,7 @@ test('rules file stays in sync with the scoring constants and keeps the sprint p
 const targetOf = (sim) => sim.data('wavelengthRooms/ABCDE/secret/target');
 const near = (t, o) => Math.min(100, Math.max(0, t + (t > 50 ? -o : o)));
 
-test('co-op: shared score, everyone guesses, hidden target, Psychic reveals', () => {
+test('co-op: shared and individual scores, everyone guesses, hidden target, Psychic reveals', () => {
   const sim = new Sim().lobbyCoop(3, { targetScore: 20 });
   gameErr(() => sim.act('p1', 'setTeam', { team: 0 }), 'invalid-state');
   sim.act('p0', 'startGame');
@@ -403,6 +403,7 @@ test('co-op: shared score, everyone guesses, hidden target, Psychic reveals', ()
   ok(sim.act('p0', 'reveal'));
   assert.equal(sim.game().result.points, 5); // 3 + 2
   assert.equal(sim.game().scores.t0, 5);
+  assert.deepEqual(sim.game().playerScores, { p0: 0, p1: 3, p2: 2 });
   gameErr(() => sim.act('p1', 'nextTurn'), 'permission-denied');
 });
 
@@ -425,6 +426,9 @@ test('co-op: Psychic rotates through all players and loses a point when nobody s
   ok(sim.act('p0', 'nextTurn'));
   ok(play(0)); // 2 guessers x 3
   assert.equal(sim.game().scores.t0, 5);
+  assert.equal(sim.game().playerScores.p0, 2);
+  assert.equal(sim.game().playerScores.p1, 0);
+  assert.equal(sim.game().playerScores.p2, 3);
   assert.equal(sim.game().winnerKey, 't0');
   ok(sim.act('p1', 'nextTurn'));
   assert.equal(sim.game().state, 'finished');
@@ -441,6 +445,7 @@ test('co-op: forged results are rejected and rotation cannot repeat the Psychic'
   const g = sim.game();
   sim.act('p1', 'lockGuess', { guess: near(t, 40) });
   sim.act('p2', 'lockGuess', { guess: near(t, 40) });
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': { ...g, playerScores: { ...g.playerScores, p1: 1 } } }));
   const forged = (o) => ({ ...g, state: 'reveal', scores: { ...g.scores, t0: 5 }, result: { guess: t, target: t, diff: 0, points: 5, ...o } });
   denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': forged({}) })); // not the Psychic
   denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ target: t + 1 }) }));
