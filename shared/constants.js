@@ -12,7 +12,7 @@
   });
   const SPECTRUM = Object.freeze({ MIN: 0, MAX: 100, NEUTRAL: 50 });
   const LIMITS = Object.freeze({
-    MIN_TEAMS: 2,
+    MIN_TEAMS: 1,
     MAX_TEAMS: 4,
     PLAYERS_PER_TEAM: 2,
     DEFAULT_TEAMS: 2,

@@ -53,7 +53,7 @@ test('prompts do not repeat until exhausted, then restart', () => {
 });
 
 test('settings validation and prompt modes', () => {
-  gameErr(() => S.sanitizeSettings({ teamCount: 1 }), 'invalid-argument');
+  gameErr(() => S.sanitizeSettings({ teamCount: 0 }), 'invalid-argument');
   gameErr(() => S.sanitizeSettings({ targetScore: 0 }), 'invalid-argument');
   gameErr(() => S.sanitizeSettings({ promptMode: 'custom' }), 'invalid-argument');
   gameErr(() => S.sanitizeSettings({ customPromptsText: 'oops' }), 'invalid-argument');
@@ -254,6 +254,24 @@ test('team rotation and role alternation', () => {
   assert.deepEqual(seen, [
     ['t0', 'p0', 'p1'], ['t1', 'p2', 'p3'], ['t2', 'p4', 'p5'],
     ['t0', 'p1', 'p0'], ['t1', 'p3', 'p2'], ['t2', 'p5', 'p4']]);
+});
+
+test('one team mode swaps roles every round', () => {
+  const sim = new Sim();
+  sim.create('p0', 'Host', { teamCount: 1, targetScore: 100 });
+  sim.join('p1', 'P1');
+  for (let i = 0; i < 2; i++) sim.act('p' + i, 'setTeam', { team: 0 });
+  sim.act('p0', 'startGame');
+  const seen = [];
+  for (let i = 0; i < 3; i++) {
+    const g = sim.game();
+    seen.push([g.activeKey, g.psychicUid, g.guesserUid]);
+    sim.act(g.psychicUid, 'writeTarget'); sim.act(g.psychicUid, 'clueGiven');
+    sim.act(g.guesserUid, 'lockGuess', { guess: 0 });
+    sim.act(g.psychicUid, 'reveal');
+    sim.act('p0', 'nextTurn');
+  }
+  assert.deepEqual(seen, [['t0', 'p0', 'p1'], ['t0', 'p1', 'p0'], ['t0', 'p0', 'p1']]);
 });
 
 test('win condition, finish, play again', () => {

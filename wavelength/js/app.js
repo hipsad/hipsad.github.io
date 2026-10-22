@@ -216,7 +216,7 @@ function joinView() {
 function howToPlay() {
   return h('section', { class: 'card how' }, h('h2', {}, 'How to play'),
     h('ol', {},
-      h('li', {}, 'Two or more teams of exactly two players take turns.'),
+      h('li', {}, 'One or more teams of exactly two players take turns.'),
       h('li', {}, 'The Psychic sees a hidden target on the dial and says a clue (out loud) that fits the spectrum.'),
       h('li', {}, 'Their teammate, the Guesser, moves the needle to where they think the target is, then locks it in.'),
       h('li', {}, 'Bullseye = 2 points, next to it = 1 point. Roles swap each time a team plays.'),
