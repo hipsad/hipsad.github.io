@@ -258,7 +258,7 @@
     if (target !== actor) requireHost(room, actor);
     requireMember(room, target);
     requireState(room, STATES.LOBBY, 'Teams are locked once the game starts.');
-    if (isCoop(room)) throw new GameError('invalid-state', 'Everyone is on one team in co-op mode.');
+    if (isCoop(room)) throw new GameError('invalid-state', 'Teams are not used in shared mode.');
     const updates = {};
     const cur = teamOf(room, target);
     if (team === null || team === undefined) {
@@ -322,6 +322,7 @@
       turn: old.turn + 1,
       activeKey: 't0',
       scores: { ...emptyScores(), ...(old.scores || {}) },
+      playerScores: Object.fromEntries(order.map((uid) => [uid, ((old.playerScores || {})[uid]) || 0])),
       teamTurns: { ...emptyScores(), ...(old.teamTurns || {}), t0: turns },
       psychicUid: order[(turns - 1) % order.length],
       prompt,
@@ -381,7 +382,7 @@
   }
 
   /** Step 2: any other player who can see the target publishes the result; the rules recompute and verify it. */
-  /** Co-op: the Psychic (the only one who can read the target) publishes once every guesser has locked in. */
+  /** Shared mode: the Psychic (the only one who can read the target) publishes after every guesser locks in. */
   function revealCoop(room, actor, env) {
     const g = room.game;
     requireState(room, STATES.GUESSING, 'The guesses are not locked yet.');
@@ -391,14 +392,33 @@
     const guessers = Object.keys(room.players).filter((u) => u !== g.psychicUid);
     if (guessers.some((u) => !locks[u])) throw new GameError('invalid-state', 'Waiting for everyone to lock in a guess.');
     const target = room.secret.target;
-    const total = guessers.reduce((n, u) => n + scoreGuess(target, locks[u].guess), 0);
-    const points = total > 0 ? total : -LIMITS.COOP_PENALTY;
+    const playerScores = { ...g.playerScores };
+    coopOrder(room).forEach((uid) => { if (playerScores[uid] === undefined) playerScores[uid] = 0; });
+    const playerResults = {};
+    let totalPoints = 0;
+    guessers.forEach((uid) => {
+      const guess = locks[uid].guess;
+      const diff = Math.abs(guess - target);
+      const points = scoreGuess(target, guess);
+      playerScores[uid] = (playerScores[uid] || 0) + points;
+      totalPoints += points;
+      playerResults[uid] = { guess, diff, points };
+    });
+    const psychicPenalty = totalPoints === 0 ? LIMITS.COOP_PENALTY : 0;
+    if (psychicPenalty) playerScores[g.psychicUid] = (playerScores[g.psychicUid] || 0) - psychicPenalty;
     let best = locks[guessers[0]].guess;
     guessers.forEach((u) => { if (Math.abs(locks[u].guess - target) < Math.abs(best - target)) best = locks[u].guess; });
     const scores = { ...emptyScores(), ...(g.scores || {}) };
-    scores.t0 += points;
-    const game = { ...g, state: STATES.REVEAL, scores, result: { guess: best, target, diff: Math.abs(best - target), points } };
-    if (scores.t0 >= room.meta.settings.targetScore) game.winnerKey = 't0';
+    const winnerUid = Object.keys(playerScores)
+      .filter((uid) => playerScores[uid] >= room.meta.settings.targetScore)
+      .sort((a, b) => playerScores[b] - playerScores[a] || coopOrder(room).indexOf(a) - coopOrder(room).indexOf(b))[0];
+    const points = winnerUid ? room.meta.settings.targetScore - scores.t0 : 0;
+    scores.t0 += points; // t0 remains the security-rules marker for a finished co-op game.
+    const game = {
+      ...g, state: STATES.REVEAL, scores, playerScores, playerResults,
+      result: { guess: best, target, diff: Math.abs(best - target), points, totalPoints, psychicPenalty },
+    };
+    if (winnerUid) { game.winnerKey = 't0'; game.winnerUid = winnerUid; }
     return { updates: { [R('game')]: game, ...stamp(env) } };
   }
 
