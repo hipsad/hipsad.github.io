@@ -126,6 +126,23 @@
               ".validate": "$k.matches(/^t[0-3]$/) && newData.isNumber() && newData.val()>=-1000 && newData.val()<=1000"
             }
           },
+          "playerScores": {
+            "$uid": {
+              ".validate": "root.child('wavelengthRooms/'+$code+'/players/'+$uid).exists() && newData.isNumber() && newData.val()>=-1000 && newData.val()<=1000 && ((!data.exists() && ((newData.val()===0 && root.child('wavelengthRooms/'+$code+'/game/state').val()==='lobby') || (root.child('wavelengthRooms/'+$code+'/game/state').val()==='guessing' && ($uid===root.child('wavelengthRooms/'+$code+'/game/psychicUid').val() ? newData.val()===0-newData.parent().parent().child('result/psychicPenalty').val() : newData.val()===newData.parent().parent().child('playerResults/'+$uid+'/points').val())))) || (data.exists() && ((newData.val()===data.val() && (root.child('wavelengthRooms/'+$code+'/game/state').val()!=='guessing' || ($uid===root.child('wavelengthRooms/'+$code+'/game/psychicUid').val() ? newData.parent().parent().child('result/psychicPenalty').val()===0 : newData.parent().parent().child('playerResults/'+$uid+'/points').val()===0))) || (root.child('wavelengthRooms/'+$code+'/game/state').val()==='guessing' && ($uid===root.child('wavelengthRooms/'+$code+'/game/psychicUid').val() ? newData.val()===data.val()-newData.parent().parent().child('result/psychicPenalty').val() : newData.val()===data.val()+newData.parent().parent().child('playerResults/'+$uid+'/points').val())))))"
+            }
+          },
+          "playerResults": {
+            "$uid": {
+              ".validate": "root.child('wavelengthRooms/'+$code+'/players/'+$uid).exists() && $uid!==root.child('wavelengthRooms/'+$code+'/game/psychicUid').val() && root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/turn').val()===root.child('wavelengthRooms/'+$code+'/game/turn').val() && newData.hasChildren(['guess','diff','points']) && newData.child('guess').val()===root.child('wavelengthRooms/'+$code+'/locks/'+$uid+'/guess').val() && newData.child('diff').val()===(newData.child('guess').val()>=root.child('wavelengthRooms/'+$code+'/secret/target').val() ? newData.child('guess').val()-root.child('wavelengthRooms/'+$code+'/secret/target').val() : root.child('wavelengthRooms/'+$code+'/secret/target').val()-newData.child('guess').val()) && newData.child('points').val()===(newData.child('diff').val()<=1 ? 3 : (newData.child('diff').val()<=5 ? 2 : (newData.child('diff').val()<=15 ? 1 : 0)))",
+              "guess": { ".validate": "newData.isNumber()" },
+              "diff": { ".validate": "newData.isNumber()" },
+              "points": { ".validate": "newData.isNumber()" },
+              "$other": { ".validate": false }
+            }
+          },
+          "winnerUid": {
+            ".validate": "newData.isString() && newData.parent().child('winnerKey').val()==='t0' && newData.parent().child('playerScores').child(newData.val()).val()>=root.child('wavelengthRooms/'+$code+'/meta/settings/targetScore').val() && root.child('wavelengthRooms/'+$code+'/players/'+newData.val()).exists()"
+          },
           "teamTurns": {
             "$k": {
               ".validate": "$k.matches(/^t[0-3]$/) && newData.isNumber() && newData.val()>=0 && newData.val()<=2000"
@@ -153,6 +170,9 @@
           },
           "result": {
             ".validate": "newData.hasChildren(['guess','target','diff','points'])",
+            "psychicPenalty": {
+              ".validate": "newData.isNumber() && (newData.val()===0 || newData.val()===1)"
+            },
             "$f": {
               ".validate": "newData.isNumber()"
             }

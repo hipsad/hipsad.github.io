@@ -177,7 +177,7 @@ function landingView() {
   });
   const rejoin = localStorage.getItem(LS_ROOM);
   put(
-    h('section', { class: 'hero' }, h('h1', {}, 'Wavelength'), h('p', {}, 'A real-time team guessing game. Read your partner\'s mind… on a dial.')),
+    h('section', { class: 'hero' }, h('h1', {}, 'Wavelength'), h('p', {}, 'A real-time guessing game. Read a clue… and get closest to the target.')),
     rejoin && h('div', { class: 'card rejoin' }, h('span', {}, `You were in room ${rejoin}.`), h('button', { class: 'btn primary', onclick: () => startRoom(rejoin) }, 'Rejoin')),
     h('section', { class: 'card' }, h('label', { class: 'field', for: 'name' }, 'Display name'), name),
     h('div', { class: 'grid2 cols' },
@@ -218,12 +218,12 @@ function joinView() {
 function howToPlay() {
   return h('section', { class: 'card how' }, h('h2', {}, 'How to play'),
     h('ol', {},
-      h('li', {}, 'One or more teams of exactly two players take turns.'),
+      h('li', {}, 'In team mode, teams of exactly two take turns. Shared mode lets everyone play for an individual score.'),
       h('li', {}, 'The Psychic sees a hidden target on the dial and says a clue (out loud) that fits the spectrum.'),
-      h('li', {}, 'Their teammate, the Guesser, moves the needle to where they think the target is, then locks it in.'),
+      h('li', {}, 'Their teammate—or everyone else in shared mode—moves a needle to where they think the target is, then locks it in.'),
       h('li', {}, 'Within 1 = 3 points, within 5 = 2 points, within 15 = 1 point. Roles swap each time a team plays.'),
       h('li', {}, 'First team to the target score wins. Other teams can see the target while they spectate.'),
-      h('li', {}, 'Co-op mode: everyone is one team, players take turns as Psychic, everyone else guesses and their points are added up. If nobody scores, the Psychic costs the team 1 point.')));
+      h('li', {}, 'Shared mode: everyone competes for their own score. Players take turns as Psychic while everyone else guesses; if nobody scores, the Psychic loses 1 point.')));
 }
 
 /* ---------- shared pieces ---------- */
@@ -247,9 +247,14 @@ function playerLine(p, extra) {
 function scoreboard() {
   const g = S.game, n = S.meta.settings.teamCount;
   if (coop()) {
-    return h('div', { class: 'scoreboard', role: 'list' }, h('div', { class: 'score active', role: 'listitem', style: { '--team': teamColor(0) } },
-      h('span', { class: 'sname' }, 'Team score'), h('span', { class: 'sval' }, `${arr(g.scores)[0] || 0} / ${S.meta.settings.targetScore}`),
-      h('span', { class: 'smembers' }, playerList().map((p) => (p.uid === g.psychicUid ? '🔮 ' : '') + p.name).join(' · '))));
+    const scores = g.playerScores || {};
+    return h('div', { class: 'scoreboard', role: 'list' }, playerList()
+      .sort((a, b) => (scores[b.uid] || 0) - (scores[a.uid] || 0))
+      .map((p, i) => h('div', {
+        class: `score ${p.uid === g.psychicUid ? 'active' : ''}`, role: 'listitem', style: { '--team': teamColor(i) },
+      }, h('span', { class: 'sname' }, p.name, p.uid === S.uid && h('em', {}, ' (you)')),
+      h('span', { class: 'sval' }, `${scores[p.uid] || 0} / ${S.meta.settings.targetScore}`),
+      h('span', { class: 'smembers' }, p.uid === g.psychicUid ? '🔮 Psychic' : 'Guessing'))));
   }
   return h('div', { class: 'scoreboard', role: 'list' }, Array.from({ length: n }, (_, t) => h('div', {
     class: `score ${g.activeTeam === t && g.state !== STATES.LOBBY ? 'active' : ''}`, role: 'listitem', style: { '--team': teamColor(t) },
@@ -320,7 +325,7 @@ function lobbyView() {
       if (sig !== formSig && !form.isDirty()) { form.setValues(s); formSig = sig; }
     } else {
       replace(summaryEl, h('ul', { class: 'summary' },
-        h('li', {}, s.gameMode === 'coop' ? 'Mode: co-op (one team)' : `Teams: ${s.teamCount}`), h('li', {}, `Target score: ${s.targetScore}`),
+        h('li', {}, s.gameMode === 'coop' ? 'Mode: shared clue, individual scores' : `Teams: ${s.teamCount}`), h('li', {}, `Target score: ${s.targetScore}`),
         h('li', {}, `Prompts: ${{ builtin: 'built-in', custom: 'custom only', mixed: 'built-in + custom' }[s.promptMode]}`),
         arr(s.customPrompts).length ? h('li', {}, `${arr(s.customPrompts).length} custom prompts`) : null));
     }
@@ -403,7 +408,7 @@ function gameView() {
     } else if (g.state === STATES.GUESSING) {
       info = isPsychic ? (cp ? 'Everyone is placing their needle.' : 'Your teammate is placing the needle. Don\'t give any more hints!')
         : isGuesser ? (lock ? (cp ? 'Guess locked in – waiting for the others…' : 'Guess locked in – revealing…') : 'Drag the needle (or use arrow keys) to where you think the target is, then lock it in.')
-          : `Spectating — watch ${nm(g.guesserUid)} move the needle live.`;
+          : `Spectating — watch ${cp ? 'the guesses' : `${nm(g.guesserUid)} move the needle live`}.`;
     } else info = 'Result';
     replace(statusEl,
       h('div', { class: 'turn', style: { '--team': teamColor(active) } },
@@ -423,10 +428,14 @@ function gameView() {
     if (result) {
       const canAdvance = isHost() || (cp ? isPsychic : myTeam() === active);
       const won = g.winnerTeam != null;
-      replace(resultEl, h('section', { class: `card result pts-${result.points}`, 'aria-live': 'polite' },
-        h('h2', {}, cp ? (result.points > 0 ? `+${result.points} for the team!` : 'Nobody scored — the Psychic loses a point') : result.points === 3 ? 'Bullseye! +3' : result.points === 2 ? 'Close! +2' : result.points === 1 ? 'Near! +1' : 'Miss — 0 points'),
-        h('p', {}, `Target ${result.target} · ${cp ? 'Best guess' : 'Guess'} ${result.guess} · ${cp ? 'The team' : teamName(active)} now has ${arr(g.scores)[active]} point${arr(g.scores)[active] === 1 ? '' : 's'}.`),
-        won && h('p', { class: 'ok' }, `${cp ? 'The team' : teamName(g.winnerTeam)} reached ${S.meta.settings.targetScore} points!`),
+      const coopResults = cp ? Object.entries(g.playerResults || {}).map(([uid, r]) => h('li', {},
+        `${nm(uid)}: guess ${r.guess} · +${r.points} (${g.playerScores[uid] || 0} total)`)) : null;
+      const winnerName = g.winnerUid && nm(g.winnerUid);
+      replace(resultEl, h('section', { class: `card result pts-${result.totalPoints || result.points}`, 'aria-live': 'polite' },
+        h('h2', {}, cp ? (result.totalPoints > 0 ? 'Individual scores updated' : `${nm(g.psychicUid)} loses ${result.psychicPenalty} point${result.psychicPenalty === 1 ? '' : 's'} — nobody scored`) : result.points === 3 ? 'Bullseye! +3' : result.points === 2 ? 'Close! +2' : result.points === 1 ? 'Near! +1' : 'Miss — 0 points'),
+        cp ? h('div', {}, h('p', {}, `Target ${result.target}${result.psychicPenalty ? ` · ${nm(g.psychicUid)} loses ${result.psychicPenalty} point` : ''}`),
+          h('ul', { class: 'final' }, coopResults)) : h('p', {}, `Target ${result.target} · Guess ${result.guess} · ${teamName(active)} now has ${arr(g.scores)[active]} point${arr(g.scores)[active] === 1 ? '' : 's'}.`),
+        won && h('p', { class: 'ok' }, `${cp ? winnerName : teamName(g.winnerTeam)} reached ${S.meta.settings.targetScore} points!`),
         canAdvance ? h('button', { class: 'btn primary big', onclick: () => act('nextTurn') }, won ? 'See final results' : 'Next turn')
           : h('p', { class: 'muted' }, 'Waiting for the host or the active team to continue…')));
     } else replace(resultEl);
@@ -441,10 +450,14 @@ function finishedView() {
     const g = S.game, n = S.meta.settings.teamCount;
     const w = g.winnerTeam == null ? 0 : g.winnerTeam;
     if (coop()) {
+      const scores = g.playerScores || {};
+      const order = playerList().sort((a, b) => (scores[b.uid] || 0) - (scores[a.uid] || 0));
       replace(el, h('section', { class: 'card center winner', style: { '--team': teamColor(0) } },
         h('div', { class: 'trophy', 'aria-hidden': 'true' }, '🏆'),
-        h('h1', {}, 'You did it together!'),
-        h('p', {}, `Final score: ${arr(g.scores)[0] || 0} (target ${S.meta.settings.targetScore}) in ${(g.teamTurns && g.teamTurns.t0) || g.turn} rounds`),
+        h('h1', {}, `${S.players[g.winnerUid] ? S.players[g.winnerUid].name : 'A player'} wins!`),
+        h('p', {}, `Final standings after ${(g.teamTurns && g.teamTurns.t0) || g.turn} rounds`),
+        h('ol', { class: 'final' }, order.map((p, i) => h('li', { style: { '--team': teamColor(i) } },
+          h('span', {}, p.name), h('strong', {}, scores[p.uid] || 0)))),
         isHost() ? h('button', { class: 'btn primary big', onclick: () => act('playAgain') }, 'Play again')
           : h('p', { class: 'muted' }, 'Waiting for the host to start a new game…'),
         h('a', { class: 'btn ghost', href: '../' }, 'Back to homepage')));

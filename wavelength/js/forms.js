@@ -12,7 +12,7 @@ export function settingsForm(initial = {}, { submitLabel, onSubmit }) {
   const teamCount = h('select', { id: 'f-teams' },
     Array.from({ length: LIMITS.MAX_TEAMS - LIMITS.MIN_TEAMS + 1 }, (_, i) => h('option', { value: LIMITS.MIN_TEAMS + i }, `${LIMITS.MIN_TEAMS + i} team${LIMITS.MIN_TEAMS + i === 1 ? "" : "s"}`)));
   const target = h('input', { id: 'f-target', type: 'number', min: LIMITS.MIN_TARGET_SCORE, max: LIMITS.MAX_TARGET_SCORE, inputmode: 'numeric' });
-  const gameMode = h('select', { id: 'f-gamemode' }, h('option', { value: 'versus' }, 'Teams (versus)'), h('option', { value: 'coop' }, 'Co-op (everyone on one team)'));
+  const gameMode = h('select', { id: 'f-gamemode' }, h('option', { value: 'versus' }, 'Teams (versus)'), h('option', { value: 'coop' }, 'Shared clue, individual scores'));
   const mode = h('select', { id: 'f-mode' }, MODES.map(([v, l]) => h('option', { value: v }, l)));
   const teamLabel = h('label', { class: 'field' }, 'Teams (2 players each)', teamCount);
   const names = h('div', { class: 'team-names' });

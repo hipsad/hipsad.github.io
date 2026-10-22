@@ -382,7 +382,7 @@ test('rules file stays in sync with the scoring constants and keeps the sprint p
 const targetOf = (sim) => sim.data('wavelengthRooms/ABCDE/secret/target');
 const near = (t, o) => Math.min(100, Math.max(0, t + (t > 50 ? -o : o)));
 
-test('co-op: shared score, everyone guesses, hidden target, Psychic reveals', () => {
+test('shared mode: individual scores, everyone guesses, hidden target, Psychic reveals', () => {
   const sim = new Sim().lobbyCoop(3, { targetScore: 20 });
   gameErr(() => sim.act('p1', 'setTeam', { team: 0 }), 'invalid-state');
   sim.act('p0', 'startGame');
@@ -401,13 +401,17 @@ test('co-op: shared score, everyone guesses, hidden target, Psychic reveals', ()
   ok(sim.act('p2', 'lockGuess', { guess: near(t, 4) }));
   gameErr(() => sim.act('p1', 'reveal'), 'permission-denied');
   ok(sim.act('p0', 'reveal'));
-  assert.equal(sim.game().result.points, 5); // 3 + 2
-  assert.equal(sim.game().scores.t0, 5);
+  assert.equal(sim.game().result.totalPoints, 5); // 3 + 2, awarded to the individual guessers
+  assert.equal(sim.game().playerScores.p1, 3);
+  assert.equal(sim.game().playerScores.p2, 2);
+  assert.equal(sim.game().playerScores.p0, 0);
+  assert.equal(sim.game().playerResults.p1.points, 3);
+  assert.equal(sim.game().scores.t0, 0); // internal team-score marker remains unused until someone wins
   gameErr(() => sim.act('p1', 'nextTurn'), 'permission-denied');
 });
 
-test('co-op: Psychic rotates through all players and loses a point when nobody scores', () => {
-  const sim = new Sim().lobbyCoop(3, { targetScore: 4 });
+test('shared mode: Psychic rotates, loses a point if everyone misses, and an individual wins', () => {
+  const sim = new Sim().lobbyCoop(3, { targetScore: 3 });
   sim.act('p0', 'startGame');
   const seen = [];
   const play = (offset) => {
@@ -420,19 +424,23 @@ test('co-op: Psychic rotates through all players and loses a point when nobody s
     return sim.act(sim.game().psychicUid, 'reveal');
   };
   ok(play(50)); // everyone misses
-  assert.equal(sim.game().result.points, -1);
-  assert.equal(sim.game().scores.t0, -1);
+  assert.equal(sim.game().result.psychicPenalty, 1);
+  assert.equal(sim.game().playerScores.p0, -1);
+  assert.equal(sim.game().playerScores.p1, 0);
+  assert.equal(sim.game().playerScores.p2, 0);
   ok(sim.act('p0', 'nextTurn'));
-  ok(play(0)); // 2 guessers x 3
-  assert.equal(sim.game().scores.t0, 5);
+  ok(play(0)); // each of two guessers earns 3
+  assert.equal(sim.game().result.totalPoints, 6);
+  assert.equal(sim.game().playerScores.p2, 3);
   assert.equal(sim.game().winnerKey, 't0');
+  assert.equal(sim.game().winnerUid, 'p2');
   ok(sim.act('p1', 'nextTurn'));
   assert.equal(sim.game().state, 'finished');
   assert.deepEqual(seen, ['p0', 'p1']);
   ok(sim.act('p0', 'playAgain'));
 });
 
-test('co-op: forged results are rejected and rotation cannot repeat the Psychic', () => {
+test('shared mode: forged individual scores are rejected and rotation cannot repeat the Psychic', () => {
   const sim = new Sim().lobbyCoop(3, { targetScore: 50 });
   sim.act('p0', 'startGame');
   sim.act('p0', 'writeTarget');
@@ -445,6 +453,13 @@ test('co-op: forged results are rejected and rotation cannot repeat the Psychic'
   denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': forged({}) })); // not the Psychic
   denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ target: t + 1 }) }));
   denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': { ...forged({}), scores: { ...g.scores, t0: 9 } } }));
+  const forgedPlayerScores = {
+    ...g, state: 'reveal',
+    result: { guess: t, target: t, diff: 0, points: 0, totalPoints: 6, psychicPenalty: 0 },
+    playerResults: { p1: { guess: t, diff: 0, points: 3 }, p2: { guess: t, diff: 0, points: 3 } },
+    playerScores: { ...g.playerScores, p1: 3, p2: 3 },
+  };
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forgedPlayerScores }));
   ok(sim.act('p0', 'reveal'));
   const next = { ...sim.game(), state: 'clue', turn: 2, teamTurns: { ...sim.game().teamTurns, t0: 2 }, psychicUid: 'p0', prompt: g.prompt };
   delete next.result;
