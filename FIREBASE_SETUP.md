@@ -1,5 +1,7 @@
 # Firebase Setup Guide
 
+> The repo now contains `database.rules.json`, which includes the `sessions` rules below **plus** the rules for the Wavelength game. Prefer deploying that file (`firebase deploy --only database`); see [WAVELENGTH.md](WAVELENGTH.md).
+
 This guide will walk you through setting up Firebase Realtime Database for the Sprint Planning Estimator.
 
 ## Why Firebase?
