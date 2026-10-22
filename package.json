@@ -1,0 +1,7 @@
+{
+  "name": "hipsad-github-io",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

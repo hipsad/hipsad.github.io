@@ -1,3 +1,13 @@
+# hipsad.github.io — project hub
+
+| Path | Project |
+| --- | --- |
+| `/` | Homepage with project cards |
+| `/sprint-planner/` | Sprint Planning Estimator (the original app, moved from `/`; old `/?session=ID` links are forwarded automatically) |
+| `/wavelength/` | Multiplayer Wavelength game — see [WAVELENGTH.md](WAVELENGTH.md) |
+
+---
+
 # Sprint Planning Estimator
 
 A collaborative web application for sprint planning and story point estimation using Planning Poker methodology with **real-time shared sessions**.

@@ -1,0 +1,49 @@
+{
+  "rules": {
+    "sessions": {
+      "$sessionId": {
+        ".read": true,
+        ".write": true,
+        ".indexOn": ["createdAt"]
+      }
+    },
+    "rooms": {
+      ".indexOn": ["meta/updatedAt"],
+      "$code": {
+        "meta": {
+          ".read": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()"
+        },
+        "players": {
+          ".read": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()"
+        },
+        "game": {
+          ".read": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()"
+        },
+        "secret": {
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid && root.child('rooms/' + $code + '/players/' + auth.uid).exists()"
+          }
+        }
+      }
+    },
+    "presence": {
+      "$code": {
+        ".read": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
+          ".validate": "newData.isBoolean()"
+        }
+      }
+    },
+    "live": {
+      "$code": {
+        ".read": "auth != null && root.child('rooms/' + $code + '/players/' + auth.uid).exists()",
+        "pos": {
+          ".write": "auth != null && root.child('rooms/' + $code + '/game/guesserUid').val() === auth.uid && root.child('rooms/' + $code + '/game/state').val() === 'guessing'",
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+        },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
