@@ -84,7 +84,7 @@ export async function joinRoom(uid, code, name) {
   let exists = false;
   try { exists = !!(await db.ref(`${ROOM_ROOT}/${code}/players/${uid}`).once('value')).val(); } catch (_) { /* not a member yet */ }
   const { updates } = planners.joinRoom(null, uid, { name, exists }, planEnv());
-  try { await db.ref().update(subst(code, updates)); }
+  try { await writeUpdates('Room join', uid, code, subst(code, updates)); }
   catch (e) { if (isDenied(e)) throw new Error('Room not found, or the game has already started.'); throw e; }
 }
 
@@ -94,7 +94,38 @@ const subst = (code, updates) => Object.fromEntries(Object.entries(updates).map(
 export async function action(name, room, uid, code, payload = {}, extraEnv) {
   const { updates } = planners[name](room, uid, payload, planEnv(extraEnv));
   if (!Object.keys(updates).length) return;
-  await db.ref().update(subst(code, updates));
+  await writeUpdates(`Action ${name}`, uid, code, subst(code, updates));
+}
+
+/**
+ * Writes a multi-path update after confirming the signed-in user is the acting player.
+ * Updates confined to one room go through that room's reference with relative paths; only
+ * updates that also touch live/presence use the root reference, so they stay atomic (each path is
+ * still validated individually by the rules, root itself is never writable).
+ */
+async function writeUpdates(operation, uid, code, updates) {
+  const paths = Object.keys(updates);
+  try {
+    const user = auth.currentUser || await ensureUser();
+    if (!user || user.uid !== uid) {
+      const e = new Error('The signed-in user does not match the acting player.');
+      e.code = 'auth/user-mismatch';
+      throw e;
+    }
+    const prefix = `${ROOM_ROOT}/${code}`;
+    const inRoom = paths.every((k) => k === prefix || k.startsWith(prefix + '/'));
+    if (inRoom) {
+      const relative = {};
+      for (const k of paths) relative[k === prefix ? '' : k.slice(prefix.length + 1)] = updates[k];
+      if ('' in relative) { await db.ref(prefix).set(relative['']); return; }
+      await db.ref(prefix).update(relative);
+    } else {
+      await db.ref().update(updates);
+    }
+  } catch (e) {
+    logFirebaseError(operation, paths.join(', '), e);
+    throw e;
+  }
 }
 
 export const roomRef = (code, path = '') => db.ref(`${ROOM_ROOT}/${normalizeRoomCode(code)}${path ? '/' + path : ''}`);
