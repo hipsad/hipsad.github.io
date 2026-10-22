@@ -94,7 +94,6 @@
     ["Memorable Name", "Forgettable Name"],
     ["Great Band Name", "Bad Band Name"],
     ["Modern Sport", "Old-School Sport"],
-    ["Exciting Sport", "Boring Sport"],
     ["Hard Video Game", "Easy Video Game"],
     ["Great Board Game", "Bad Board Game"],
     ["Mature", "Childish"],
