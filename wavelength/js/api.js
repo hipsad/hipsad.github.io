@@ -50,7 +50,7 @@ export async function createRoom(uid, name, settings) {
       if (!isDenied(e)) throw e;
     }
   }
-  throw new Error('Could not find a free room code – please try again.');
+  throw new Error('Firebase denied room creation. Check that Anonymous sign-in is enabled and the latest database.rules.json has been deployed, then try again.');
 }
 
 /** Joins (or re-joins) a room. Rules refuse unknown rooms and rooms that already started. */
