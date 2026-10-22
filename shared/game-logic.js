@@ -322,6 +322,7 @@
       turn: old.turn + 1,
       activeKey: 't0',
       scores: { ...emptyScores(), ...(old.scores || {}) },
+      playerScores: Object.fromEntries(order.map((uid) => [uid, (old.playerScores || {})[uid] || 0])),
       teamTurns: { ...emptyScores(), ...(old.teamTurns || {}), t0: turns },
       psychicUid: order[(turns - 1) % order.length],
       prompt,
@@ -393,11 +394,21 @@
     const target = room.secret.target;
     const total = guessers.reduce((n, u) => n + scoreGuess(target, locks[u].guess), 0);
     const points = total > 0 ? total : -LIMITS.COOP_PENALTY;
+    const playerScores = { ...(g.playerScores || {}) };
+    const playerPoints = {};
+    guessers.forEach((uid) => {
+      playerPoints[uid] = scoreGuess(target, locks[uid].guess);
+      playerScores[uid] = (playerScores[uid] || 0) + playerPoints[uid];
+    });
+    if (total <= 0) {
+      playerPoints[g.psychicUid] = -LIMITS.COOP_PENALTY;
+      playerScores[g.psychicUid] = (playerScores[g.psychicUid] || 0) - LIMITS.COOP_PENALTY;
+    }
     let best = locks[guessers[0]].guess;
     guessers.forEach((u) => { if (Math.abs(locks[u].guess - target) < Math.abs(best - target)) best = locks[u].guess; });
     const scores = { ...emptyScores(), ...(g.scores || {}) };
     scores.t0 += points;
-    const game = { ...g, state: STATES.REVEAL, scores, result: { guess: best, target, diff: Math.abs(best - target), points } };
+    const game = { ...g, state: STATES.REVEAL, scores, playerScores, result: { guess: best, target, diff: Math.abs(best - target), points } };
     if (scores.t0 >= room.meta.settings.targetScore) game.winnerKey = 't0';
     return { updates: { [R('game')]: game, ...stamp(env) } };
   }
