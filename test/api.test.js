@@ -16,8 +16,11 @@ test('room creation waits for auth, writes one room path, and logs Firebase fail
 
   const auth = {
     onAuthStateChanged(callback) {
-      authListener = callback;
-      queueMicrotask(() => callback(currentUser));
+      authListener = (user) => {
+        if (user) authReady = true;
+        callback(user);
+      };
+      queueMicrotask(() => authListener(currentUser));
       return () => {};
     },
     signInAnonymously() {
@@ -28,11 +31,6 @@ test('room creation waits for auth, writes one room path, and logs Firebase fail
       }));
     },
   };
-  const onAuthStateChanged = auth.onAuthStateChanged;
-  auth.onAuthStateChanged = (...args) => onAuthStateChanged.call(auth, (user) => {
-    if (user) authReady = true;
-    args[0](user);
-  });
   const database = () => ({
     ref(path) {
       return {
@@ -70,7 +68,8 @@ test('room creation waits for auth, writes one room path, and logs Firebase fail
   assert.equal(config.databaseURL, 'https://sprint-planner-5e1b0-default-rtdb.firebaseio.com');
 
   writeError = { code: 'PERMISSION_DENIED', message: 'write rejected by rules' };
-  await assert.rejects(api.createRoom('host', 'Host', {}), (e) => e === writeError);
+  await assert.rejects(api.createRoom('host', 'Host', {}), (e) =>
+    e.code === 'room/creation-denied' && e.cause === writeError && /try again/.test(e.message));
   assert.equal(writes.length, 2);
   assert.match(writes[1].path, /^wavelengthRooms\/[A-HJKMNP-Z2-9]{5}$/);
   assert.equal(logs[0][1].path, writes[1].path);

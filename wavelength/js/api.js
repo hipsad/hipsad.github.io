@@ -69,6 +69,12 @@ export async function createRoom(uid, name, settings) {
     return code;
   } catch (e) {
     logFirebaseError('Room creation', path, e);
+    if (isDenied(e)) {
+      const guidance = new Error('Firebase denied room creation. Check Anonymous sign-in and deploy the current database.rules.json; see the browser console for the denied path. If the code happened to collide, try again.');
+      guidance.code = 'room/creation-denied';
+      guidance.cause = e;
+      throw guidance;
+    }
     throw e;
   }
 }
