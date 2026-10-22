@@ -446,6 +446,15 @@ test('co-op: forged results are rejected and rotation cannot repeat the Psychic'
   sim.act('p1', 'lockGuess', { guess: near(t, 40) });
   sim.act('p2', 'lockGuess', { guess: near(t, 40) });
   denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': { ...g, playerScores: { ...g.playerScores, p1: 1 } } }));
+  const locks = sim.data('wavelengthRooms/ABCDE/locks');
+  const forgedScores = {
+    ...g,
+    state: 'reveal',
+    scores: { ...g.scores, t0: -1 },
+    playerScores: { ...g.playerScores, p0: -1, p1: 1 },
+    result: { guess: locks.p1.guess, target: t, diff: Math.abs(locks.p1.guess - t), points: -1 },
+  };
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forgedScores }));
   const forged = (o) => ({ ...g, state: 'reveal', scores: { ...g.scores, t0: 5 }, result: { guess: t, target: t, diff: 0, points: 5, ...o } });
   denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': forged({}) })); // not the Psychic
   denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ target: t + 1 }) }));
