@@ -36,7 +36,7 @@ The rules were tested with an in-repo evaluator (`npm test`), not the Firebase e
    This **replaces the rules currently in the console** (the existing `sessions` rules are preserved).
 3. The frontend deploys as before through GitHub Pages.
 
-The Wavelength client and Sprint Planner intentionally share the existing `sprint-planner-5e1b0` Firebase project and Realtime Database URL. Wavelength rooms live under `/wavelengthRooms/{code}`; room creation writes only to that individual code path, and the database rules allow creation only when that code does not already exist. The client does not read `/wavelengthRooms` or grant broad parent-level access. Deploy the updated rules file so the console uses the same namespace; no public-access rules are needed.
+The Wavelength client and Sprint Planner intentionally share the existing `sprint-planner-5e1b0` Firebase project and Realtime Database URL. Wavelength rooms live under `/wavelengthRooms/{code}`; room creation writes only to that individual code path, and the database rules atomically allow creation only when that code does not already exist. The client does not read `/wavelengthRooms` or grant broad parent-level access. Because non-members cannot read room contents (including the hidden target), a denied write is logged and surfaced rather than guessed to be a collision and silently retried. Deploy the updated rules file so the console uses the same namespace; no public-access rules are needed.
 
 ## Game rules implemented
 
