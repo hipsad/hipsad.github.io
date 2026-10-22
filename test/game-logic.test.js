@@ -88,8 +88,8 @@ test('lobby: join is idempotent, teams hold 2, only host starts, start needs ful
   denied(sim.create('p9', 'Intruder')); // room code collision: existing room cannot be overwritten
   for (let i = 1; i < 4; i++) ok(sim.join('p' + i, 'P' + i));
   ok(sim.join('p1', 'Renamed')); // reconnect: no duplicate slot
-  assert.equal(Object.keys(sim.data('rooms/ABCDE/players')).length, 4);
-  assert.equal(sim.data('rooms/ABCDE/players/p1/name'), 'Renamed');
+  assert.equal(Object.keys(sim.data('wavelengthRooms/ABCDE/players')).length, 4);
+  assert.equal(sim.data('wavelengthRooms/ABCDE/players/p1/name'), 'Renamed');
   ok(sim.act('p0', 'setTeam', { team: 0 }));
   ok(sim.act('p1', 'setTeam', { team: 0 }));
   gameErr(() => sim.act('p2', 'setTeam', { team: 0 }), 'team-full');
@@ -99,7 +99,7 @@ test('lobby: join is idempotent, teams hold 2, only host starts, start needs ful
   gameErr(() => sim.act('p1', 'startGame'), 'permission-denied');
   gameErr(() => sim.act('p1', 'setTeam', { team: 1, targetUid: 'p2' }), 'permission-denied');
   // forged start by a non-host straight to the database
-  denied(sim.raw('p1', { 'rooms/{code}/game': { state: 'clue', turn: 1, activeKey: 't0', scores: { t0: 0, t1: 0, t2: 0, t3: 0 }, teamTurns: { t0: 1, t1: 0, t2: 0, t3: 0 }, psychicUid: 'p0', guesserUid: 'p1', prompt: { high: 'a', low: 'b' } } }));
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': { state: 'clue', turn: 1, activeKey: 't0', scores: { t0: 0, t1: 0, t2: 0, t3: 0 }, teamTurns: { t0: 1, t1: 0, t2: 0, t3: 0 }, psychicUid: 'p0', guesserUid: 'p1', prompt: { high: 'a', low: 'b' } } }));
   ok(sim.act('p0', 'startGame'));
   assert.equal(sim.game().state, STATES.CLUE);
 });
@@ -111,19 +111,19 @@ test('team slots cannot be claimed twice concurrently or overfilled by raw write
   ok(sim.act('p0', 'setTeam', { team: 0 }));
   ok(sim.act('p1', 'setTeam', { team: 0 }));
   // p2 and p3 both planned from a stale view; the slot is taken so the rules reject the write
-  denied(sim.raw('p2', { 'rooms/{code}/teams/t0/a': 'p2' }));
-  denied(sim.raw('p2', { 'rooms/{code}/teams/t0/b': 'p2' }));
-  denied(sim.raw('p2', { 'rooms/{code}/teams/t3/a': 'p2' })); // team does not exist (2 teams)
-  denied(sim.raw('p2', { 'rooms/{code}/teams/t1/a': 'p3' })); // cannot place someone else
-  ok(sim.raw('p2', { 'rooms/{code}/teams/t1/a': 'p2' }));
-  denied(sim.raw('p2', { 'rooms/{code}/teams/t1/b': 'p2' })); // same player in both slots
+  denied(sim.raw('p2', { 'wavelengthRooms/{code}/teams/t0/a': 'p2' }));
+  denied(sim.raw('p2', { 'wavelengthRooms/{code}/teams/t0/b': 'p2' }));
+  denied(sim.raw('p2', { 'wavelengthRooms/{code}/teams/t3/a': 'p2' })); // team does not exist (2 teams)
+  denied(sim.raw('p2', { 'wavelengthRooms/{code}/teams/t1/a': 'p3' })); // cannot place someone else
+  ok(sim.raw('p2', { 'wavelengthRooms/{code}/teams/t1/a': 'p2' }));
+  denied(sim.raw('p2', { 'wavelengthRooms/{code}/teams/t1/b': 'p2' })); // same player in both slots
 });
 
 test('non-members: cannot read, join a running game, or join a missing room', () => {
   const sim = new Sim().lobby4();
-  assert.equal(sim.db.read('x', 'rooms/ABCDE/meta').denied, true);
-  assert.equal(sim.db.read('x', 'rooms/ABCDE/game').denied, true);
-  assert.equal(sim.db.read('x', 'rooms/ABCDE/players').denied, true);
+  assert.equal(sim.db.read('x', 'wavelengthRooms/ABCDE/meta').denied, true);
+  assert.equal(sim.db.read('x', 'wavelengthRooms/ABCDE/game').denied, true);
+  assert.equal(sim.db.read('x', 'wavelengthRooms/ABCDE/players').denied, true);
   ok(sim.join('late', 'Late')); // lobby joins are allowed
   ok(sim.act('p0', 'startGame'));
   denied(sim.join('later', 'Later'));
@@ -137,13 +137,13 @@ test('settings: host only, lobby only, shrinking teams clears their slots', () =
   for (let i = 1; i < 6; i++) sim.join('p' + i, 'P' + i);
   for (let i = 0; i < 6; i++) sim.act('p' + i, 'setTeam', { team: Math.floor(i / 2) });
   gameErr(() => sim.act('p1', 'updateSettings', { teamCount: 2 }), 'permission-denied');
-  denied(sim.raw('p1', { 'rooms/{code}/meta/settings/targetScore': 1 }));
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/meta/settings/targetScore': 1 }));
   ok(sim.act('p0', 'updateSettings', { teamCount: 2, targetScore: 6, promptMode: 'mixed', customPromptsText: '(Hot, Cold)' }));
-  assert.equal(sim.data('rooms/ABCDE/teams/t2'), undefined);
-  assert.equal(sim.data('rooms/ABCDE/meta/settings/targetScore'), 6);
-  assert.equal(sim.data('rooms/ABCDE/meta/settings/customPrompts/0/high'), 'Hot');
+  assert.equal(sim.data('wavelengthRooms/ABCDE/teams/t2'), undefined);
+  assert.equal(sim.data('wavelengthRooms/ABCDE/meta/settings/targetScore'), 6);
+  assert.equal(sim.data('wavelengthRooms/ABCDE/meta/settings/customPrompts/0/high'), 'Hot');
   // oversized / out of range values are rejected by the rules
-  denied(sim.raw('p0', { 'rooms/{code}/meta/settings': { teamCount: 9, targetScore: 5, promptMode: 'builtin', teamNames: ['a'] } }));
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/meta/settings': { teamCount: 9, targetScore: 5, promptMode: 'builtin', teamNames: ['a'] } }));
 });
 
 /* ---------- visibility ---------- */
@@ -153,25 +153,25 @@ test('target is hidden from the guesser until reveal; psychic and spectators see
   const g = sim.game();
   assert.equal(g.psychicUid, 'p0'); assert.equal(g.guesserUid, 'p1');
   gameErr(() => sim.act('p0', 'clueGiven'), 'invalid-state'); // target not yet set
-  denied(sim.raw('p1', { 'rooms/{code}/secret': { target: 50, turn: 1 } })); // guesser cannot choose the target
-  denied(sim.raw('p2', { 'rooms/{code}/secret': { target: 50, turn: 1 } })); // neither can a spectator
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/secret': { target: 50, turn: 1 } })); // guesser cannot choose the target
+  denied(sim.raw('p2', { 'wavelengthRooms/{code}/secret': { target: 50, turn: 1 } })); // neither can a spectator
   ok(sim.act('p0', 'writeTarget'));
-  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret').denied, true);
-  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, true);
-  assert.equal(sim.db.read('p0', 'rooms/ABCDE/secret/target').denied, false);
-  assert.equal(sim.db.read('p2', 'rooms/ABCDE/secret/target').denied, false);
-  assert.equal(sim.db.read('p3', 'rooms/ABCDE/secret/target').denied, false);
-  assert.equal(sim.db.read('x', 'rooms/ABCDE/secret/target').denied, true);
-  denied(sim.raw('p0', { 'rooms/{code}/secret': { target: 10, turn: 1 } })); // cannot re-roll the same turn
+  assert.equal(sim.db.read('p1', 'wavelengthRooms/ABCDE/secret').denied, true);
+  assert.equal(sim.db.read('p1', 'wavelengthRooms/ABCDE/secret/target').denied, true);
+  assert.equal(sim.db.read('p0', 'wavelengthRooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.db.read('p2', 'wavelengthRooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.db.read('p3', 'wavelengthRooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.db.read('x', 'wavelengthRooms/ABCDE/secret/target').denied, true);
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/secret': { target: 10, turn: 1 } })); // cannot re-roll the same turn
   // the public game node never contains the target before the reveal
   assert.equal(sim.game().result, undefined);
   assert.equal(sim.game().target, undefined);
   ok(sim.act('p0', 'clueGiven'));
-  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, true);
+  assert.equal(sim.db.read('p1', 'wavelengthRooms/ABCDE/secret/target').denied, true);
   ok(sim.act('p1', 'lockGuess', { guess: 40 }));
-  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, true); // still hidden after locking, until reveal
+  assert.equal(sim.db.read('p1', 'wavelengthRooms/ABCDE/secret/target').denied, true); // still hidden after locking, until reveal
   ok(sim.act('p2', 'reveal'));
-  assert.equal(sim.db.read('p1', 'rooms/ABCDE/secret/target').denied, false);
+  assert.equal(sim.db.read('p1', 'wavelengthRooms/ABCDE/secret/target').denied, false);
   assert.equal(sim.game().result.guess, 40);
 });
 
@@ -185,26 +185,26 @@ test('turn flow: roles, duplicate submissions, invalid transitions, forged resul
   gameErr(() => sim.act('p0', 'nextTurn'), 'invalid-state');
   gameErr(() => sim.act('p1', 'clueGiven'), 'permission-denied');
   sim.act('p0', 'writeTarget');
-  const target = sim.data('rooms/ABCDE/secret/target');
+  const target = sim.data('wavelengthRooms/ABCDE/secret/target');
   ok(sim.act('p0', 'clueGiven'));
   gameErr(() => sim.act('p0', 'clueGiven'), 'invalid-state');
   gameErr(() => sim.act('p0', 'lockGuess', { guess: 10 }), 'permission-denied'); // psychic cannot guess
   gameErr(() => sim.act('p2', 'lockGuess', { guess: 10 }), 'permission-denied');
   for (const bad of [-1, 101, NaN, 'x', null, undefined, true, '']) gameErr(() => sim.act('p1', 'lockGuess', { guess: bad }), 'invalid-argument');
-  denied(sim.raw('p1', { 'rooms/{code}/lock': { turn: 1, guess: 500 } }));
-  denied(sim.raw('p0', { 'rooms/{code}/lock': { turn: 1, guess: 50 } }));
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/lock': { turn: 1, guess: 500 } }));
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/lock': { turn: 1, guess: 50 } }));
   ok(sim.act('p1', 'lockGuess', { guess: target }));
   gameErr(() => sim.act('p1', 'lockGuess', { guess: 1 }), 'invalid-state'); // duplicate
-  denied(sim.raw('p1', { 'rooms/{code}/lock': { turn: 1, guess: 1 } })); // duplicate, bypassing the client check
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/lock': { turn: 1, guess: 1 } })); // duplicate, bypassing the client check
   gameErr(() => sim.act('p1', 'reveal'), 'permission-denied'); // guesser cannot reveal
   // forged reveals straight to the database
   const g = sim.game();
   const forged = (over) => ({ ...g, state: 'reveal', scores: { ...g.scores, t0: 2 }, result: { guess: target, target, diff: 0, points: 2, ...over.result }, ...over.game });
-  denied(sim.raw('p1', { 'rooms/{code}/game': forged({}) }));
-  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ result: { points: 1 } }) }));
-  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ game: { scores: { ...g.scores, t0: 9 } } }) }));
-  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ game: { scores: { ...g.scores, t1: 2, t0: 0 } } }) }));
-  denied(sim.raw('p0', { 'rooms/{code}/game': forged({ result: { target: target + 1 } }) }));
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/game': forged({}) }));
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ result: { points: 1 } }) }));
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ game: { scores: { ...g.scores, t0: 9 } } }) }));
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ game: { scores: { ...g.scores, t1: 2, t0: 0 } } }) }));
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': forged({ result: { target: target + 1 } }) }));
   ok(sim.act('p2', 'reveal'));
   gameErr(() => sim.act('p3', 'reveal'), 'invalid-state'); // duplicate reveal
   assert.equal(sim.game().result.points, 2);
@@ -225,7 +225,7 @@ test('points are computed from the real target (miss, side, centre)', () => {
     const sim = new Sim().lobby4();
     sim.act('p0', 'startGame');
     sim.act('p0', 'writeTarget');
-    const t = sim.data('rooms/ABCDE/secret/target');
+    const t = sim.data('wavelengthRooms/ABCDE/secret/target');
     const sign = t > 50 ? -1 : 1;
     sim.act('p0', 'clueGiven');
     sim.act('p1', 'lockGuess', { guess: t + sign * off });
@@ -262,7 +262,7 @@ test('win condition, finish, play again', () => {
   const g = sim.playTurn(0);
   assert.equal(g.winnerKey, 't0');
   assert.equal(g.state, STATES.REVEAL);
-  denied(sim.raw('p0', { 'rooms/{code}/game': { ...g, state: 'clue' } })); // no going backwards
+  denied(sim.raw('p0', { 'wavelengthRooms/{code}/game': { ...g, state: 'clue' } })); // no going backwards
   gameErr(() => sim.act('p2', 'nextTurn'), 'permission-denied');
   ok(sim.act('p0', 'nextTurn'));
   assert.equal(sim.game().state, STATES.FINISHED);
@@ -272,8 +272,8 @@ test('win condition, finish, play again', () => {
   const fresh = sim.game();
   assert.equal(fresh.state, STATES.LOBBY);
   assert.deepEqual(fresh.scores, { t0: 0, t1: 0, t2: 0, t3: 0 });
-  assert.equal(sim.data('rooms/ABCDE/secret'), undefined);
-  assert.equal(Object.keys(sim.data('rooms/ABCDE/players')).length, 4);
+  assert.equal(sim.data('wavelengthRooms/ABCDE/secret'), undefined);
+  assert.equal(Object.keys(sim.data('wavelengthRooms/ABCDE/players')).length, 4);
   ok(sim.act('p0', 'startGame')); // new game works; stale lock/secret from before are gone
   ok(sim.act('p0', 'writeTarget'));
 });
@@ -293,17 +293,17 @@ test('leaving mid-game returns to lobby; removal rules; host transfer; last play
   const sim = new Sim().lobby4();
   sim.act('p0', 'startGame');
   gameErr(() => sim.act('p1', 'removePlayer', { targetUid: 'p2' }), 'permission-denied');
-  denied(sim.raw('p1', { 'rooms/{code}/players/p2': null }));
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}/players/p2': null }));
   ok(sim.act('p3', 'removePlayer'));
   assert.equal(sim.game().state, STATES.LOBBY);
-  assert.match(sim.data('rooms/ABCDE/meta/notice'), /left/);
-  assert.equal(sim.data('rooms/ABCDE/players/p3'), undefined);
-  assert.equal(sim.data('rooms/ABCDE/teams/t1/b'), undefined);
+  assert.match(sim.data('wavelengthRooms/ABCDE/meta/notice'), /left/);
+  assert.equal(sim.data('wavelengthRooms/ABCDE/players/p3'), undefined);
+  assert.equal(sim.data('wavelengthRooms/ABCDE/teams/t1/b'), undefined);
   ok(sim.act('p0', 'removePlayer', { targetUid: 'p2' })); // host removes a disconnected player
   ok(sim.act('p0', 'removePlayer')); // host leaves -> earliest remaining player becomes host
-  assert.equal(sim.data('rooms/ABCDE/meta/hostUid'), 'p1');
+  assert.equal(sim.data('wavelengthRooms/ABCDE/meta/hostUid'), 'p1');
   ok(sim.act('p1', 'removePlayer')); // last one out deletes the room
-  assert.equal(sim.data('rooms/ABCDE'), undefined);
+  assert.equal(sim.data('wavelengthRooms/ABCDE'), undefined);
   assert.equal(sim.data('presence/ABCDE'), undefined);
 });
 
@@ -313,8 +313,8 @@ test('claiming host requires the host to be offline in presence', () => {
   denied(sim.act('p1', 'claimHost', {}, { hostOnline: false })); // presence says nothing about the host -> rules refuse
   ok(sim.raw('p0', { 'presence/{code}/p0': false }));
   ok(sim.act('p1', 'claimHost', {}, { hostOnline: false }));
-  assert.equal(sim.data('rooms/ABCDE/meta/hostUid'), 'p1');
-  denied(sim.raw('p2', { 'rooms/{code}/meta/hostUid': 'p2' })); // host is p1 and online
+  assert.equal(sim.data('wavelengthRooms/ABCDE/meta/hostUid'), 'p1');
+  denied(sim.raw('p2', { 'wavelengthRooms/{code}/meta/hostUid': 'p2' })); // host is p1 and online
 });
 
 test('presence and live needle permissions', () => {
@@ -338,18 +338,19 @@ test('presence and live needle permissions', () => {
 
 test('stale rooms can be deleted by anyone, fresh rooms only by the host', () => {
   const sim = new Sim().lobby4();
-  denied(sim.raw('p1', { 'rooms/{code}': null }));
-  denied(sim.raw('x', { 'rooms/{code}': null }));
+  denied(sim.raw('p1', { 'wavelengthRooms/{code}': null }));
+  denied(sim.raw('x', { 'wavelengthRooms/{code}': null }));
   sim.db.now += 25 * 60 * 60 * 1000;
-  ok(sim.raw('x', { 'rooms/{code}': null }));
+  ok(sim.raw('x', { 'wavelengthRooms/{code}': null }));
 });
 
 test('rules file stays in sync with the scoring constants and keeps the sprint planner rules', () => {
   const { SCORING } = require('../shared/constants.js');
   const rules = require('../database.rules.json').rules;
-  const txt = rules.rooms.$code.game['.write'];
+  const txt = rules.wavelengthRooms.$code.game['.write'];
   assert.ok(txt.includes(`<=${SCORING.CENTER_RADIUS} ? ${SCORING.CENTER_POINTS}`));
   assert.ok(txt.includes(`<=${SCORING.SIDE_RADIUS} ? ${SCORING.SIDE_POINTS}`));
   assert.equal(rules.sessions.$sessionId['.read'], true);
-  assert.equal(rules.rooms.$code['.read'], undefined); // members read child nodes only, so `secret` stays protected
+  assert.equal(rules.wavelengthRooms.$code['.read'], undefined); // members read child nodes only, so `secret` stays protected
+  assert.equal(rules.rooms, undefined);
 });

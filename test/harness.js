@@ -17,13 +17,13 @@ class Sim {
   }
   /** What `uid`'s browser would see (children it is not allowed to read come back undefined). */
   view(uid) {
-    const g = (p) => this.db.read(uid, `rooms/${this.code}/${p}`).value;
+    const g = (p) => this.db.read(uid, `wavelengthRooms/${this.code}/${p}`).value;
     const room = { meta: g('meta'), players: g('players'), teams: g('teams'), game: g('game'), used: S.arr(g('used')), secret: g('secret'), lock: g('lock') };
     return room;
   }
   create(uid, name = 'Host', settings = {}) {
     const room = S.createRoom(uid, name, settings, this.env());
-    return this.db.update(uid, { [`rooms/${this.code}`]: room });
+    return this.db.update(uid, { [`wavelengthRooms/${this.code}`]: room });
   }
   /** Plans with the client logic, then submits through the rules. Throws GameError from the planner; returns the rules verdict. */
   act(uid, action, payload = {}, extraEnv) {
@@ -32,7 +32,7 @@ class Sim {
     return this.db.update(uid, this.sub(updates));
   }
   join(uid, name) {
-    const exists = !!(this.db.read(uid, `rooms/${this.code}/players/${uid}`).value);
+    const exists = !!(this.db.read(uid, `wavelengthRooms/${this.code}/players/${uid}`).value);
     return this.act(uid, 'joinRoom', { name, exists });
   }
   raw(uid, updates) { return this.db.update(uid, this.sub(updates)); }
@@ -45,13 +45,13 @@ class Sim {
     for (let i = 0; i < 4; i++) this.act('p' + i, 'setTeam', { team: Math.floor(i / 2) });
     return this;
   }
-  game() { return this.data(`rooms/${this.code}/game`); }
+  game() { return this.data(`wavelengthRooms/${this.code}/game`); }
   /** Plays one complete turn; `guess` is relative to the target (offset) */
   playTurn(offset = 0) {
     const g = this.game();
     const others = ['p0', 'p1', 'p2', 'p3'].filter((u) => u !== g.guesserUid && u !== g.psychicUid);
     this.act(g.psychicUid, 'writeTarget');
-    const t = this.data(`rooms/${this.code}/secret/target`);
+    const t = this.data(`wavelengthRooms/${this.code}/secret/target`);
     this.act(g.psychicUid, 'clueGiven');
     const guess = Math.min(100, Math.max(0, t + offset));
     this.act(g.guesserUid, 'lockGuess', { guess });
