@@ -8,7 +8,7 @@ async function setup(t, { user = null, writeError = null } = {}) {
   const previousFirebase = globalThis.firebase;
   const previousWindow = globalThis.window;
   const previousConsoleError = console.error;
-  const state = { writes: [], reads: [], updates: [], logs: [], authReady: false, signIns: 0, writeError, config: null };
+  const state = { writes: [], reads: [], updates: [], updatePaths: [], logs: [], authReady: false, signIns: 0, writeError, config: null };
   let currentUser = user;
   let authListener;
 
@@ -44,6 +44,7 @@ async function setup(t, { user = null, writeError = null } = {}) {
           return { val: () => null };
         },
         async update(value) {
+          state.updatePaths.push(path);
           state.updates.push(value);
         },
       };
@@ -119,7 +120,8 @@ test('join and room listeners use individual wavelengthRooms paths', async (t) =
 
   await api.joinRoom('host', 'ABCD2', 'Host');
   assert.deepEqual(state.reads, ['wavelengthRooms/ABCD2/players/host']);
-  assert.deepEqual(Object.keys(state.updates[0]), ['wavelengthRooms/ABCD2/players/host']);
+  assert.deepEqual(Object.keys(state.updates[0]), ['players/host']);
+  assert.equal(state.updatePaths[0], 'wavelengthRooms/ABCD2');
   assert.equal(api.roomRef('ABCD2', 'meta').path, 'wavelengthRooms/ABCD2/meta');
 });
 

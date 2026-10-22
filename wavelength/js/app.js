@@ -62,8 +62,7 @@ function startRoom(code) {
   localStorage.setItem(LS_ROOM, code);
   const fail = (e) => {
     const denied = e && /permission_denied/i.test(e.code || e.message || '');
-    if (S.hadMembership) S.closed = 'You are no longer in this room (it may have been closed or you were removed).';
-    else if (denied) S.needsJoin = true;
+    if (denied) S.needsJoin = true;
     else toast(api.friendlyError(e));
     stopListeners(); schedule();
   };
@@ -136,7 +135,7 @@ function render() {
   if (S.closed) return mount('closed', () => messageView('Room unavailable', S.closed));
   if (S.needsJoin) return mount('join:' + S.code, joinView);
   if (!S.meta || !S.players || !S.game) return mount('loading', () => messageView('Loading room…', null, true));
-  if (!S.players[S.uid]) return mount('closed', () => messageView('Room unavailable', 'You are not in this room.'));
+  if (!S.players[S.uid]) { S.needsJoin = true; stopListeners(); return mount('join:' + S.code, joinView); }
   const st = S.game.state;
   if (st === STATES.LOBBY) return mount('lobby:' + S.code, lobbyView);
   if (st === STATES.FINISHED) return mount('finished:' + S.code, finishedView);
