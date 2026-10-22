@@ -88,7 +88,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; margin
 .dial.interactive { cursor: grab; } .dial.dragging { cursor: grabbing; }
 .dial-track { fill: #232846; stroke: #3a4170; stroke-width: 2; }
 .dial-ticks line { stroke: #5a6290; stroke-width: 2; stroke-linecap: round; }
-.band-center { fill: #7bd88f; opacity: .92; } .band-side { fill: #ffd166; opacity: .85; }
+.band-bullseye { fill: #4cc9f0; opacity: .95; } .band-center { fill: #7bd88f; opacity: .92; } .band-side { fill: #ffd166; opacity: .85; }
 .band-label { fill: #10131f; font-size: 15px; font-weight: 800; pointer-events: none; }
 .dial-target { stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 2 5; }
 .needle-line { stroke: var(--accent); stroke-width: 5; stroke-linecap: round; filter: drop-shadow(0 0 4px var(--accent)); }

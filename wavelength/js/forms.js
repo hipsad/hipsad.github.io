@@ -12,7 +12,9 @@ export function settingsForm(initial = {}, { submitLabel, onSubmit }) {
   const teamCount = h('select', { id: 'f-teams' },
     Array.from({ length: LIMITS.MAX_TEAMS - LIMITS.MIN_TEAMS + 1 }, (_, i) => h('option', { value: LIMITS.MIN_TEAMS + i }, `${LIMITS.MIN_TEAMS + i} team${LIMITS.MIN_TEAMS + i === 1 ? "" : "s"}`)));
   const target = h('input', { id: 'f-target', type: 'number', min: LIMITS.MIN_TARGET_SCORE, max: LIMITS.MAX_TARGET_SCORE, inputmode: 'numeric' });
+  const gameMode = h('select', { id: 'f-gamemode' }, h('option', { value: 'versus' }, 'Teams (versus)'), h('option', { value: 'coop' }, 'Co-op (everyone on one team)'));
   const mode = h('select', { id: 'f-mode' }, MODES.map(([v, l]) => h('option', { value: v }, l)));
+  const teamLabel = h('label', { class: 'field' }, 'Teams (2 players each)', teamCount);
   const names = h('div', { class: 'team-names' });
   const text = h('textarea', {
     id: 'f-custom', rows: 5, spellcheck: 'false', placeholder: '(Expensive, Cheap)\n(Hot, Cold)\n(Great Movie, Terrible Movie)',
@@ -27,7 +29,7 @@ export function settingsForm(initial = {}, { submitLabel, onSubmit }) {
   const nameValues = [];
 
   function renderNames() {
-    const n = Number(teamCount.value);
+    const n = gameMode.value === 'coop' ? 0 : Number(teamCount.value);
     names.querySelectorAll('input').forEach((el, i) => { nameValues[i] = el.value; });
     replace(names, Array.from({ length: n }, (_, i) => h('label', { class: 'field small' }, `Team ${i + 1} name`,
       h('input', {
@@ -47,7 +49,9 @@ export function settingsForm(initial = {}, { submitLabel, onSubmit }) {
         h('ul', { class: 'prompt-preview' }, prompts.slice(0, 50).map((p) => h('li', {}, `${p.low} ◀ ▶ ${p.high}`)))) : h('p', { class: 'muted' }, 'No valid prompts yet.'));
   }
   function setValues(s) {
-    teamCount.value = String(s.teamCount || LIMITS.DEFAULT_TEAMS);
+    gameMode.value = s.gameMode || 'versus';
+    teamLabel.hidden = gameMode.value === 'coop';
+    teamCount.value = String(gameMode.value === 'coop' ? LIMITS.DEFAULT_TEAMS : s.teamCount || LIMITS.DEFAULT_TEAMS);
     target.value = String(s.targetScore || LIMITS.DEFAULT_TARGET_SCORE);
     mode.value = s.promptMode || 'builtin';
     text.value = s.customPromptsText || '';
@@ -55,11 +59,13 @@ export function settingsForm(initial = {}, { submitLabel, onSubmit }) {
     renderNames(); renderPreview(); dirty = false;
   }
   teamCount.addEventListener('change', () => { dirty = true; renderNames(); });
+  gameMode.addEventListener('change', () => { dirty = true; teamLabel.hidden = gameMode.value === 'coop'; renderNames(); });
   mode.addEventListener('change', () => { dirty = true; renderPreview(); });
   target.addEventListener('input', () => { dirty = true; });
   text.addEventListener('input', () => { dirty = true; renderPreview(); });
 
   const getValues = () => ({
+    gameMode: gameMode.value,
     teamCount: Number(teamCount.value),
     targetScore: Number(target.value),
     promptMode: mode.value,
@@ -78,8 +84,9 @@ export function settingsForm(initial = {}, { submitLabel, onSubmit }) {
       else { err.textContent = ''; onSubmit(v); }
     },
   },
+  h('label', { class: 'field' }, 'Game mode', gameMode),
   h('div', { class: 'grid2' },
-    h('label', { class: 'field' }, 'Teams (2 players each)', teamCount),
+    teamLabel,
     h('label', { class: 'field' }, 'Target score', target)),
   names,
   h('label', { class: 'field' }, 'Prompt mode', mode),

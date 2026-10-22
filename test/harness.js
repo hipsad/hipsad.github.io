@@ -18,7 +18,7 @@ class Sim {
   /** What `uid`'s browser would see (children it is not allowed to read come back undefined). */
   view(uid) {
     const g = (p) => this.db.read(uid, `wavelengthRooms/${this.code}/${p}`).value;
-    const room = { meta: g('meta'), players: g('players'), teams: g('teams'), game: g('game'), used: S.arr(g('used')), secret: g('secret'), lock: g('lock') };
+    const room = { meta: g('meta'), players: g('players'), teams: g('teams'), game: g('game'), used: S.arr(g('used')), secret: g('secret'), lock: g('lock'), locks: g('locks') };
     return room;
   }
   create(uid, name = 'Host', settings = {}) {
@@ -43,6 +43,12 @@ class Sim {
     this.create('p0', 'Host', { teamCount: 2, ...settings });
     for (let i = 1; i < 4; i++) this.join('p' + i, 'P' + i);
     for (let i = 0; i < 4; i++) this.act('p' + i, 'setTeam', { team: Math.floor(i / 2) });
+    return this;
+  }
+  /** Co-op lobby: p0 (host) .. p{n-1}, all in one room, no teams. */
+  lobbyCoop(n = 3, settings = {}) {
+    this.create('p0', 'Host', { gameMode: 'coop', ...settings });
+    for (let i = 1; i < n; i++) this.join('p' + i, 'P' + i);
     return this;
   }
   game() { return this.data(`wavelengthRooms/${this.code}/game`); }

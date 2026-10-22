@@ -106,10 +106,10 @@ export function createDial({ onInput, onCommit, bandsFor }) {
     if (t == null) { targetMark.setAttribute('visibility', 'hidden'); return; }
     for (const b of bandsFor(t)) {
       bandsG.appendChild(svgEl('path', {
-        d: sector(b.from, b.to), class: `band band-${b.points === SCORING.CENTER_POINTS ? 'center' : 'side'}`,
+        d: sector(b.from, b.to), class: `band band-${b.points === SCORING.BULLSEYE_POINTS ? 'bullseye' : b.points === SCORING.CENTER_POINTS ? 'center' : 'side'}`,
       }));
       const mid = (b.from + b.to) / 2;
-      if (b.to - b.from >= 4) {
+      if (b.to - b.from >= (b.points === SCORING.BULLSEYE_POINTS ? 1.5 : 4)) {
         const [x, y] = pt((R + R_IN) / 2, mid);
         const label = svgEl('text', { x: f(x), y: f(y + 5), class: 'band-label', 'text-anchor': 'middle' });
         label.textContent = String(b.points);
