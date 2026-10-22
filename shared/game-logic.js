@@ -267,7 +267,7 @@
     const pool = promptPool(room.meta.settings);
     const { prompt, deck } = drawPrompt(pool, (room.server || {}).deck, env.rng);
     g.prompt = prompt;
-    const target = Math.round(env.rng() * (SPECTRUM.MAX - SPECTRUM.MIN) * 10) / 10 + SPECTRUM.MIN;
+    const target = clamp(Math.round(env.rng() * (SPECTRUM.MAX - SPECTRUM.MIN) * 10) / 10 + SPECTRUM.MIN, SPECTRUM.MIN, SPECTRUM.MAX);
     room.server = { target, deck };
     // Everyone except the active guesser may read the target while the turn is in progress.
     room.secret = {};
