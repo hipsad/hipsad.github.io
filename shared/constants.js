@@ -20,7 +20,7 @@
     DEFAULT_TEAMS: 2,
     DEFAULT_TARGET_SCORE: 10,
     MIN_COOP_PLAYERS: 2,
-    COOP_PENALTY: 1, // the Psychic costs the team this many points when nobody scores
+    COOP_PENALTY: 1, // Psychic loses this many individual points when nobody scores
     MIN_TARGET_SCORE: 1,
     MAX_TARGET_SCORE: 100,
     MAX_NAME_LENGTH: 20,

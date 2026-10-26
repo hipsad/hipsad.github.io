@@ -162,16 +162,18 @@
     return tied.includes(activeTeam) ? activeTeam : tied[0];
   }
 
-  /** Converts the stored game (keyed t0..t3) into UI-friendly fields. */
+  /** Converts stored team scores or co-op player scores into UI-friendly fields. */
   function decorateGame(game, teamCount) {
     if (!game) return game;
     const key = game.activeKey || 't0';
     const sc = game.scores || {};
+    const coop = !!game.psychicUid && !game.guesserUid;
     return {
       ...game,
       activeTeam: Number(key.slice(1)),
-      scores: Array.from({ length: teamCount }, (_, t) => sc[teamKey(t)] || 0),
-      winnerTeam: game.winnerKey ? Number(game.winnerKey.slice(1)) : null,
+      scores: coop ? sc : Array.from({ length: teamCount }, (_, t) => sc[teamKey(t)] || 0),
+      winnerTeam: game.winnerKey && /^t[0-3]$/.test(game.winnerKey) ? Number(game.winnerKey.slice(1)) : null,
+      winnerUid: game.winnerKey && !/^t[0-3]$/.test(game.winnerKey) ? game.winnerKey : null,
     };
   }
 
@@ -317,11 +319,12 @@
     if (order.length < LIMITS.MIN_COOP_PLAYERS) throw new GameError('invalid-state', 'Not enough players.');
     const turns = ((old.teamTurns || {}).t0 || 0) + 1;
     const { prompt, used } = drawPrompt(promptPool(room.meta.settings), usedIn, env.rng);
+    const scores = Object.fromEntries(order.map((uid) => [uid, (old.scores || {})[uid] || 0]));
     const game = {
       state: STATES.CLUE,
       turn: old.turn + 1,
       activeKey: 't0',
-      scores: { ...emptyScores(), ...(old.scores || {}) },
+      scores,
       teamTurns: { ...emptyScores(), ...(old.teamTurns || {}), t0: turns },
       psychicUid: order[(turns - 1) % order.length],
       prompt,
@@ -391,14 +394,26 @@
     const guessers = Object.keys(room.players).filter((u) => u !== g.psychicUid);
     if (guessers.some((u) => !locks[u])) throw new GameError('invalid-state', 'Waiting for everyone to lock in a guess.');
     const target = room.secret.target;
-    const total = guessers.reduce((n, u) => n + scoreGuess(target, locks[u].guess), 0);
-    const points = total > 0 ? total : -LIMITS.COOP_PENALTY;
+    const guesserPoints = Object.fromEntries(guessers.map((uid) => [uid, scoreGuess(target, locks[uid].guess)]));
+    const total = Object.values(guesserPoints).reduce((sum, points) => sum + points, 0);
+    const bullseyeUid = guessers.find((uid) => guesserPoints[uid] === SCORING.BULLSEYE_POINTS);
+    const psychicPoints = bullseyeUid
+      ? 1
+      : total === 0 ? -LIMITS.COOP_PENALTY : 0;
     let best = locks[guessers[0]].guess;
     guessers.forEach((u) => { if (Math.abs(locks[u].guess - target) < Math.abs(best - target)) best = locks[u].guess; });
-    const scores = { ...emptyScores(), ...(g.scores || {}) };
-    scores.t0 += points;
-    const game = { ...g, state: STATES.REVEAL, scores, result: { guess: best, target, diff: Math.abs(best - target), points } };
-    if (scores.t0 >= room.meta.settings.targetScore) game.winnerKey = 't0';
+    const scores = { ...(g.scores || {}) };
+    Object.entries(guesserPoints).forEach(([uid, points]) => { scores[uid] = (scores[uid] || 0) + points; });
+    scores[g.psychicUid] = (scores[g.psychicUid] || 0) + psychicPoints;
+    const result = {
+      guess: best, target, diff: Math.abs(best - target),
+      points: total + psychicPoints, guesserPoints, psychicPoints, bullseyeUid: bullseyeUid || null,
+    };
+    const order = coopOrder(room);
+    const candidates = order.filter((uid) => scores[uid] >= room.meta.settings.targetScore);
+    const winner = candidates.sort((a, b) => scores[b] - scores[a] || order.indexOf(a) - order.indexOf(b))[0];
+    const game = { ...g, state: STATES.REVEAL, scores, result };
+    if (winner) game.winnerKey = winner;
     return { updates: { [R('game')]: game, ...stamp(env) } };
   }
 
